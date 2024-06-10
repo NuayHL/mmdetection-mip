@@ -59,6 +59,8 @@ from .yolo import YOLOV3
 from .yolof import YOLOF
 from .yolox import YOLOX
 
+from .yolox_test1_mip import YOLOX_test1_mip
+
 __all__ = [
     'ATSS', 'BaseDetector', 'SingleStageDetector', 'TwoStageDetector', 'RPN',
     'KnowledgeDistillationSingleStageDetector', 'FastRCNN', 'FasterRCNN',
@@ -71,5 +73,6 @@ __all__ = [
     'MaskFormer', 'DDOD', 'Mask2Former', 'SemiBaseDetector', 'SoftTeacher',
     'RTMDet', 'Detectron2Wrapper', 'CrowdDet', 'CondInst', 'BoxInst',
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
-    'DDQDETR', 'GroundingDINO'
+    'DDQDETR', 'GroundingDINO',
+    'YOLOX_test1_mip'
 ]

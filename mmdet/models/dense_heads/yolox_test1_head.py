@@ -72,6 +72,8 @@ class YOLOX_test1_Head(BaseDenseHead):
         feat_channels: int = 256,
         stacked_convs: int = 2,
         strides: Sequence[int] = (8, 16, 32),
+        num_experts: int = 5,
+        num_selects: int = 3,
         use_depthwise: bool = False,
         dcn_on_last_conv: bool = False,
         conv_bias: Union[bool, str] = 'auto',
@@ -114,6 +116,8 @@ class YOLOX_test1_Head(BaseDenseHead):
         self.feat_channels = feat_channels
         self.stacked_convs = stacked_convs
         self.strides = strides
+        self.num_experts = num_experts
+        self.num_selects = num_selects
         self.use_depthwise = use_depthwise
         self.dcn_on_last_conv = dcn_on_last_conv
         assert conv_bias == 'auto' or isinstance(conv_bias, bool)
@@ -141,22 +145,37 @@ class YOLOX_test1_Head(BaseDenseHead):
             # YOLOX does not support sampling
             self.sampler = PseudoSampler()
 
-        self._init_layers()
+        self._init_all()
 
-    def _init_layers(self) -> None:
-        """Initialize heads for all level feature maps."""
-        self.multi_level_cls_convs = nn.ModuleList()
-        self.multi_level_reg_convs = nn.ModuleList()
-        self.multi_level_conv_cls = nn.ModuleList()
-        self.multi_level_conv_reg = nn.ModuleList()
-        self.multi_level_conv_obj = nn.ModuleList()
+    def _init_all(self):
+        """Initialize the experts according to the num of experts"""
+        self.experts = nn.ModuleList()
+        for _ in range(self.num_experts):
+            self.experts.append(self._init_experts())
+
+    def _init_experts(self):
+        """Initialize one heads/experts for all level feature maps."""
+        temp_head = nn.ModuleDict()
+
+        multi_level_cls_convs = nn.ModuleList()
+        multi_level_reg_convs = nn.ModuleList()
+        multi_level_conv_cls = nn.ModuleList()
+        multi_level_conv_reg = nn.ModuleList()
+        multi_level_conv_obj = nn.ModuleList()
         for _ in self.strides:
-            self.multi_level_cls_convs.append(self._build_stacked_convs())
-            self.multi_level_reg_convs.append(self._build_stacked_convs())
+            multi_level_cls_convs.append(self._build_stacked_convs())
+            multi_level_reg_convs.append(self._build_stacked_convs())
             conv_cls, conv_reg, conv_obj = self._build_predictor()
-            self.multi_level_conv_cls.append(conv_cls)
-            self.multi_level_conv_reg.append(conv_reg)
-            self.multi_level_conv_obj.append(conv_obj)
+            multi_level_conv_cls.append(conv_cls)
+            multi_level_conv_reg.append(conv_reg)
+            multi_level_conv_obj.append(conv_obj)
+
+        temp_head['multi_level_cls_convs'] = multi_level_cls_convs
+        temp_head['multi_level_reg_convs'] = multi_level_reg_convs
+        temp_head['multi_level_conv_cls'] = multi_level_conv_cls
+        temp_head['multi_level_conv_reg'] = multi_level_conv_reg
+        temp_head['multi_level_conv_obj'] = multi_level_conv_obj
+        return temp_head
 
     def _build_stacked_convs(self) -> nn.Sequential:
         """Initialize conv layers of a single level head."""
@@ -191,7 +210,7 @@ class YOLOX_test1_Head(BaseDenseHead):
 
     def init_weights(self) -> None:
         """Initialize weights of the head."""
-        super(YOLOXHead, self).init_weights()
+        super(YOLOX_test1_Head, self).init_weights()
         # Use prior in model initialization to improve stability
         bias_init = bias_init_with_prob(0.01)
         for conv_cls, conv_obj in zip(self.multi_level_conv_cls,
@@ -214,22 +233,28 @@ class YOLOX_test1_Head(BaseDenseHead):
 
         return cls_score, bbox_pred, objectness
 
-    def forward(self, x: Tuple[Tensor]) -> Tuple[List]:
+    def forward(self, x: Tuple[Tensor]):
         """Forward features from the upstream network.
 
         Args:
             x (Tuple[Tensor]): Features from the upstream network, each is
                 a 4D-tensor.
         Returns:
-            Tuple[List]: A tuple of multi-level classification scores, bbox
-            predictions, and objectnesses.
+            Tuple(Tuple[List], gate_value):
+            A tuple of multi-level classification scores,
+                                   bbox predictions,
+                                   and objectnesses.
+            gate value
         """
+        gate_value = x[-1]
+        x = x[:-1]
 
-        return multi_apply(self.forward_single, x, self.multi_level_cls_convs,
-                           self.multi_level_reg_convs,
-                           self.multi_level_conv_cls,
-                           self.multi_level_conv_reg,
-                           self.multi_level_conv_obj)
+        return [multi_apply(self.forward_single, x,
+                            _expert['multi_level_cls_convs'],
+                            _expert['multi_level_reg_convs'],
+                            _expert['multi_level_conv_cls'],
+                            _expert['multi_level_conv_reg'],
+                            _expert['multi_level_conv_obj']) for _expert in self.experts], gate_value
 
     def predict_by_feat(self,
                         cls_scores: List[Tensor],
@@ -399,15 +424,28 @@ class YOLOX_test1_Head(BaseDenseHead):
             results.scores = det_bboxes[:, -1]
         return results
 
-    def loss_by_feat(
+    def loss_by_feat(self,
+                     experts_output_list,
+                     gate_value,
+                     batch_gt_instances: Sequence[InstanceData],
+                     batch_img_metas: Sequence[dict],
+                     batch_gt_instances_ignore: OptInstanceList = None) -> dict:
+        pass
+        # hint: maybe we can let the distribute_batch_idx calculate at this function
+
+    def _loss_by_feat(
             self,
             cls_scores: Sequence[Tensor],
             bbox_preds: Sequence[Tensor],
             objectnesses: Sequence[Tensor],
+            distribute_batch_idx,
             batch_gt_instances: Sequence[InstanceData],
             batch_img_metas: Sequence[dict],
             batch_gt_instances_ignore: OptInstanceList = None) -> dict:
-        """Calculate the loss based on the features extracted by the detection
+        """Modified from original yolox head code in mmdet,
+            Add the distribute_batch_idx to calculate certain idx.
+
+            Calculate the loss based on the features extracted by the detection
         head.
 
         Args:

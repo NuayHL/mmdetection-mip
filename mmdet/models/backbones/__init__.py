@@ -18,10 +18,14 @@ from .ssd_vgg import SSDVGG
 from .swin import SwinTransformer
 from .trident_resnet import TridentResNet
 
+from .backbone_with_gate import BackboneWithGate
+from .selector import Selector_test1
+
 __all__ = [
     'RegNet', 'ResNet', 'ResNetV1d', 'ResNeXt', 'SSDVGG', 'HRNet',
     'MobileNetV2', 'Res2Net', 'HourglassNet', 'DetectoRS_ResNet',
     'DetectoRS_ResNeXt', 'Darknet', 'ResNeSt', 'TridentResNet', 'CSPDarknet',
     'SwinTransformer', 'PyramidVisionTransformer',
-    'PyramidVisionTransformerV2', 'EfficientNet', 'CSPNeXt'
+    'PyramidVisionTransformerV2', 'EfficientNet', 'CSPNeXt',
+    'BackboneWithGate', 'Selector_test1'
 ]
