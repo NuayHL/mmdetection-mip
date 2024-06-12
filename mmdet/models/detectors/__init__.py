@@ -58,7 +58,6 @@ from .yolact import YOLACT
 from .yolo import YOLOV3
 from .yolof import YOLOF
 from .yolox import YOLOX
-
 from .yolox_test1_mip import YOLOX_test1_mip
 
 __all__ = [

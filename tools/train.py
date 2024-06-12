@@ -3,6 +3,12 @@ import argparse
 import os
 import os.path as osp
 
+# change to the local mmdet
+import sys
+_current_dir = os.getcwd()
+print(_current_dir)
+sys.path.insert(0, _current_dir)
+
 from mmengine.config import Config, DictAction
 from mmengine.registry import RUNNERS
 from mmengine.runner import Runner
@@ -112,7 +118,6 @@ def main():
         # build customized runner from the registry
         # if 'runner_type' is set in the cfg
         runner = RUNNERS.build(cfg)
-
     # start training
     runner.train()
 

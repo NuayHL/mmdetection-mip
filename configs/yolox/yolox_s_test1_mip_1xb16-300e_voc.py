@@ -3,13 +3,13 @@ _base_ = [
     './yolox_tta.py'
 ]
 
-img_scale = (640, 640)  # width, height
+custom_imports = dict(imports=['mmdet.models'], allow_failed_imports=False)
 
-num_experts = 5
-num_selects = 3
+img_scale = (640, 640)  # width, height
 
 # model settings
 model = dict(
+    # type='YOLOX_test1_mip',
     type='YOLOX_test1_mip',
     data_preprocessor=dict(
         type='DetDataPreprocessor',
@@ -25,17 +25,17 @@ model = dict(
         type='BackboneWithGate',
         backbone_cfg=dict(
             type='CSPDarknet',
-            deepen_factor=0.33,
-            widen_factor=0.5,
-            out_indices=(2, 3, 4),
-            use_depthwise=False,
-            spp_kernal_sizes=(5, 9, 13),
-            norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
-            act_cfg=dict(type='Swish'),),
+                    deepen_factor=0.33,
+                    widen_factor=0.5,
+                    out_indices=(2, 3, 4),
+                    use_depthwise=False,
+                    spp_kernal_sizes=(5, 9, 13),
+                    norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
+                    act_cfg=dict(type='Swish'),),
         gate_cfg=dict(
             type='Selector_test1',
             input_channels=512,
-            num_experts=num_experts,
+            num_experts=5,
             dropout=0.2,
         )
     ),
@@ -55,8 +55,8 @@ model = dict(
         feat_channels=128,
         stacked_convs=2,
         strides=(8, 16, 32),
-        num_experts=num_experts,
-        num_selects=num_selects,
+        num_experts=5,
+        num_selects=3,
         use_depthwise=False,
         norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
         act_cfg=dict(type='Swish'),
@@ -77,7 +77,7 @@ model = dict(
             reduction='sum',
             loss_weight=1.0),
         loss_l1=dict(type='L1Loss', reduction='sum', loss_weight=1.0),
-        loss_gate=dict(type='CV_Squared_Loss', loss_weight=1.0),),
+        loss_gate=dict(type='CV_Squared_Loss', loss_weight=0.1),),
     train_cfg=dict(assigner=dict(type='SimOTAAssigner', center_radius=2.5)),
     # In order to align the source code, the threshold of the val phase is
     # 0.01, and the threshold of the test phase is 0.001.
@@ -163,14 +163,14 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=16,
-    num_workers=8,
+    batch_size=32,
+    num_workers=16,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=train_dataset)
 val_dataloader = dict(
-    batch_size=16,
-    num_workers=8,
+    batch_size=32,
+    num_workers=16,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -194,7 +194,7 @@ test_evaluator = val_evaluator
 # training settings
 max_epochs = 300
 num_last_epochs = 15
-interval = 5
+interval = 1
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=interval)
 

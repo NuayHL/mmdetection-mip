@@ -16,6 +16,8 @@ from .typing_utils import (ConfigType, InstanceList, MultiConfig,
                            OptConfigType, OptInstanceList, OptMultiConfig,
                            OptPixelList, PixelList, RangeType)
 
+from .moe_utils import list_slice, dict_sum_up
+
 __all__ = [
     'collect_env', 'find_latest_checkpoint', 'update_data_root',
     'setup_multi_processes', 'get_caller_name', 'log_img_scale', 'compat_cfg',
@@ -24,5 +26,6 @@ __all__ = [
     'sync_random_seed', 'ConfigType', 'InstanceList', 'MultiConfig',
     'OptConfigType', 'OptInstanceList', 'OptMultiConfig', 'OptPixelList',
     'PixelList', 'RangeType', 'get_test_pipeline_cfg',
-    'setup_cache_size_limit_of_dynamo', 'imshow_mot_errors'
+    'setup_cache_size_limit_of_dynamo', 'imshow_mot_errors',
+    'list_slice', 'dict_sum_up'
 ]

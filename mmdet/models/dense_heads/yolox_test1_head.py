@@ -15,7 +15,7 @@ from torch import Tensor
 from mmdet.registry import MODELS, TASK_UTILS
 from mmdet.structures.bbox import bbox_xyxy_to_cxcywh
 from mmdet.utils import (ConfigType, OptConfigType, OptInstanceList,
-                         OptMultiConfig, reduce_mean)
+                         OptMultiConfig, reduce_mean, list_slice, dict_sum_up)
 from ..task_modules.prior_generators import MlvlPointGenerator
 from ..task_modules.samplers import PseudoSampler
 from ..utils import multi_apply
@@ -66,47 +66,49 @@ class YOLOX_test1_Head(BaseDenseHead):
     """
 
     def __init__(
-        self,
-        num_classes: int,
-        in_channels: int,
-        feat_channels: int = 256,
-        stacked_convs: int = 2,
-        strides: Sequence[int] = (8, 16, 32),
-        num_experts: int = 5,
-        num_selects: int = 3,
-        use_depthwise: bool = False,
-        dcn_on_last_conv: bool = False,
-        conv_bias: Union[bool, str] = 'auto',
-        conv_cfg: OptConfigType = None,
-        norm_cfg: ConfigType = dict(type='BN', momentum=0.03, eps=0.001),
-        act_cfg: ConfigType = dict(type='Swish'),
-        loss_cls: ConfigType = dict(
-            type='CrossEntropyLoss',
-            use_sigmoid=True,
-            reduction='sum',
-            loss_weight=1.0),
-        loss_bbox: ConfigType = dict(
-            type='IoULoss',
-            mode='square',
-            eps=1e-16,
-            reduction='sum',
-            loss_weight=5.0),
-        loss_obj: ConfigType = dict(
-            type='CrossEntropyLoss',
-            use_sigmoid=True,
-            reduction='sum',
-            loss_weight=1.0),
-        loss_l1: ConfigType = dict(
-            type='L1Loss', reduction='sum', loss_weight=1.0),
-        train_cfg: OptConfigType = None,
-        test_cfg: OptConfigType = None,
-        init_cfg: OptMultiConfig = dict(
-            type='Kaiming',
-            layer='Conv2d',
-            a=math.sqrt(5),
-            distribution='uniform',
-            mode='fan_in',
-            nonlinearity='leaky_relu')
+            self,
+            num_classes: int,
+            in_channels: int,
+            feat_channels: int = 256,
+            stacked_convs: int = 2,
+            strides: Sequence[int] = (8, 16, 32),
+            num_experts: int = 5,
+            num_selects: int = 3,
+            use_depthwise: bool = False,
+            dcn_on_last_conv: bool = False,
+            conv_bias: Union[bool, str] = 'auto',
+            conv_cfg: OptConfigType = None,
+            norm_cfg: ConfigType = dict(type='BN', momentum=0.03, eps=0.001),
+            act_cfg: ConfigType = dict(type='Swish'),
+            loss_cls: ConfigType = dict(
+                type='CrossEntropyLoss',
+                use_sigmoid=True,
+                reduction='sum',
+                loss_weight=1.0),
+            loss_bbox: ConfigType = dict(
+                type='IoULoss',
+                mode='square',
+                eps=1e-16,
+                reduction='sum',
+                loss_weight=5.0),
+            loss_obj: ConfigType = dict(
+                type='CrossEntropyLoss',
+                use_sigmoid=True,
+                reduction='sum',
+                loss_weight=1.0),
+            loss_l1: ConfigType = dict(
+                type='L1Loss', reduction='sum', loss_weight=1.0),
+            loss_gate: ConfigType = dict(
+                type='CV_Squared_Loss', loss_weight=0.1),
+            train_cfg: OptConfigType = None,
+            test_cfg: OptConfigType = None,
+            init_cfg: OptMultiConfig = dict(
+                type='Kaiming',
+                layer='Conv2d',
+                a=math.sqrt(5),
+                distribution='uniform',
+                mode='fan_in',
+                nonlinearity='leaky_relu')
     ) -> None:
 
         super().__init__(init_cfg=init_cfg)
@@ -131,6 +133,7 @@ class YOLOX_test1_Head(BaseDenseHead):
         self.loss_cls: nn.Module = MODELS.build(loss_cls)
         self.loss_bbox: nn.Module = MODELS.build(loss_bbox)
         self.loss_obj: nn.Module = MODELS.build(loss_obj)
+        self.loss_gate: nn.Module = MODELS.build(loss_gate)
 
         self.use_l1 = False  # This flag will be modified by hooks.
         self.loss_l1: nn.Module = MODELS.build(loss_l1)
@@ -145,6 +148,7 @@ class YOLOX_test1_Head(BaseDenseHead):
             # YOLOX does not support sampling
             self.sampler = PseudoSampler()
 
+        self.softmax = nn.Softmax(dim=1)
         self._init_all()
 
     def _init_all(self):
@@ -213,10 +217,11 @@ class YOLOX_test1_Head(BaseDenseHead):
         super(YOLOX_test1_Head, self).init_weights()
         # Use prior in model initialization to improve stability
         bias_init = bias_init_with_prob(0.01)
-        for conv_cls, conv_obj in zip(self.multi_level_conv_cls,
-                                      self.multi_level_conv_obj):
-            conv_cls.bias.data.fill_(bias_init)
-            conv_obj.bias.data.fill_(bias_init)
+        for expert in self.experts:
+            for conv_cls, conv_obj in zip(expert['multi_level_conv_cls'],
+                                          expert['multi_level_conv_obj']):
+                conv_cls.bias.data.fill_(bias_init)
+                conv_obj.bias.data.fill_(bias_init)
 
     def forward_single(self, x: Tensor, cls_convs: nn.Module,
                        reg_convs: nn.Module, conv_cls: nn.Module,
@@ -241,22 +246,73 @@ class YOLOX_test1_Head(BaseDenseHead):
                 a 4D-tensor.
         Returns:
             Tuple(Tuple[List], gate_value):
+            (
             A tuple of multi-level classification scores,
                                    bbox predictions,
-                                   and objectnesses.
-            gate value
+                                   and objectnesses. ,
+            The return of self.gate_value_to_topk(gate values)
+            )
         """
         gate_value = x[-1]
         x = x[:-1]
 
-        return [multi_apply(self.forward_single, x,
-                            _expert['multi_level_cls_convs'],
-                            _expert['multi_level_reg_convs'],
-                            _expert['multi_level_conv_cls'],
-                            _expert['multi_level_conv_reg'],
-                            _expert['multi_level_conv_obj']) for _expert in self.experts], gate_value
+        return ([multi_apply(self.forward_single, x,
+                             _expert['multi_level_cls_convs'],
+                             _expert['multi_level_reg_convs'],
+                             _expert['multi_level_conv_cls'],
+                             _expert['multi_level_conv_reg'],
+                             _expert['multi_level_conv_obj']) for _expert in self.experts],
+                self.gate_value_to_topk(gate_value),
+                )
 
     def predict_by_feat(self,
+                        experts_output_list,
+                        gate_value_and_topk_idx,
+                        batch_img_metas: Optional[List[dict]] = None,
+                        cfg: Optional[ConfigDict] = None,
+                        rescale: bool = False,
+                        with_nms: bool = True) -> List[InstanceData]:
+        """Doing nms after gathering"""
+        # always None
+        cfg = self.test_cfg if cfg is None else cfg
+
+        gate_value, topk_idx = gate_value_and_topk_idx
+        distribute_idx = self.distribute_to_experts(topk_idx=topk_idx)
+        batch_lenth = len(batch_img_metas)
+        result_list = [None] * batch_lenth
+        for i in range(self.num_experts):
+            task_idx = distribute_idx[i]
+            # if no data sent to this expert
+            if task_idx is None:
+                continue
+            cls_scores, bbox_preds, objectnesses = experts_output_list[i]
+            cls_scores = [cls_score[task_idx] for cls_score in cls_scores]
+            bbox_preds = [bbox_pred[task_idx] for bbox_pred in bbox_preds]
+            objectnesses = [objectness[task_idx] for objectness in objectnesses]
+            batch_img_metas_i = list_slice(task_idx, batch_img_metas)
+
+            predicts_list = self._predict_by_feat(cls_scores,
+                                                  bbox_preds,
+                                                  objectnesses,
+                                                  batch_img_metas_i,
+                                                  cfg=cfg,
+                                                  rescale=rescale,
+                                                  with_nms=with_nms)
+            for idx, batch_idx in enumerate(task_idx.tolist()):
+                if result_list[batch_idx] is None:
+                    result_list[batch_idx] = predicts_list[idx]
+                else:
+                    result_list[batch_idx] = result_list[batch_idx].cat(list(predicts_list[idx]))
+        # Doing nms here
+        for idx, img_meta in enumerate(batch_img_metas):
+            result_list[idx] = self._bbox_post_process(results=result_list[idx],
+                                                       cfg=cfg,
+                                                       rescale=rescale,
+                                                       with_nms=with_nms,
+                                                       img_meta=img_meta)
+        return result_list
+
+    def _predict_by_feat(self,
                         cls_scores: List[Tensor],
                         bbox_preds: List[Tensor],
                         objectnesses: Optional[List[Tensor]],
@@ -331,23 +387,18 @@ class YOLOX_test1_Head(BaseDenseHead):
         flatten_bboxes = self._bbox_decode(flatten_priors, flatten_bbox_preds)
 
         result_list = []
-        for img_id, img_meta in enumerate(batch_img_metas):
+        for img_id in range(num_imgs):
             max_scores, labels = torch.max(flatten_cls_scores[img_id], 1)
             valid_mask = flatten_objectness[
-                img_id] * max_scores >= cfg.score_thr
+                             img_id] * max_scores >= cfg.score_thr
             results = InstanceData(
                 bboxes=flatten_bboxes[img_id][valid_mask],
                 scores=max_scores[valid_mask] *
-                flatten_objectness[img_id][valid_mask],
+                       flatten_objectness[img_id][valid_mask],
                 labels=labels[valid_mask])
 
-            result_list.append(
-                self._bbox_post_process(
-                    results=results,
-                    cfg=cfg,
-                    rescale=rescale,
-                    with_nms=with_nms,
-                    img_meta=img_meta))
+            # no nms here
+            result_list.append(results)
 
         return result_list
 
@@ -426,23 +477,70 @@ class YOLOX_test1_Head(BaseDenseHead):
 
     def loss_by_feat(self,
                      experts_output_list,
-                     gate_value,
+                     gate_value_and_topk_idx,
                      batch_gt_instances: Sequence[InstanceData],
                      batch_img_metas: Sequence[dict],
                      batch_gt_instances_ignore: OptInstanceList = None) -> dict:
-        pass
-        # hint: maybe we can let the distribute_batch_idx calculate at this function
+        gate_value, topk_idx = gate_value_and_topk_idx
+        distribute_idx = self.distribute_to_experts(topk_idx=topk_idx)
+        loss_dict = dict()
+        for i in range(self.num_experts):
+            task_idx = distribute_idx[i]
+            if task_idx is None:
+                continue
+            cls_scores, bbox_preds, objectnesses = experts_output_list[i]
+            cls_scores = [cls_score[task_idx] for cls_score in cls_scores]
+            bbox_preds = [bbox_pred[task_idx] for bbox_pred in bbox_preds]
+            objectnesses = [objectness[task_idx] for objectness in objectnesses]
+            batch_gt_instances_i = list_slice(task_idx, batch_gt_instances)
+            batch_img_metas_i = list_slice(task_idx, batch_img_metas)
+            batch_gt_instances_ignore_i = list_slice(task_idx, batch_gt_instances_ignore)
+            _loss_dict = self._loss_by_feat(cls_scores,
+                                            bbox_preds,
+                                            objectnesses,
+                                            batch_gt_instances_i,
+                                            batch_img_metas_i,
+                                            batch_gt_instances_ignore_i)
+            loss_dict = dict_sum_up(loss_dict, _loss_dict)
+        loss_dict['loss_gate'] = self.loss_gate(gate_value)
+        return loss_dict
+
+    def gate_value_to_topk(self, gate_value):
+        """how to use the gate value, can be implemented with various method
+            e.g. noise top-k
+            current is the easiest implement
+
+            input: torch shape (batch_size, num_experts)
+        """
+        top_logists, topk_idx = gate_value.topk(self.num_selects, dim=1)
+        top_gate_value = self.softmax(top_logists)
+
+        """set the rest to zero, while keep the gate value shape"""
+        fin_gate_value = torch.zeros_like(gate_value, requires_grad=True).type_as(top_gate_value)
+        fin_gate_value = fin_gate_value.scatter(1, topk_idx, top_gate_value)
+
+        return fin_gate_value, topk_idx
+
+    def distribute_to_experts(self, topk_idx):
+        """distribute task within a batch to different experts
+            input topk_idx: shape (batch_size, num_selects）
+        """
+        output = [None] * self.num_experts
+        for expert_id in range(self.num_experts):
+            data_indices = (topk_idx == expert_id).nonzero(as_tuple=True)[0]
+            if data_indices.numel() > 0:
+                output[expert_id] = data_indices
+        return output
 
     def _loss_by_feat(
             self,
             cls_scores: Sequence[Tensor],
             bbox_preds: Sequence[Tensor],
             objectnesses: Sequence[Tensor],
-            distribute_batch_idx,
             batch_gt_instances: Sequence[InstanceData],
             batch_img_metas: Sequence[dict],
             batch_gt_instances_ignore: OptInstanceList = None) -> dict:
-        """Modified from original yolox head code in mmdet,
+        """Compute the loss of each expert,
             Add the distribute_batch_idx to calculate certain idx.
 
             Calculate the loss based on the features extracted by the detection
