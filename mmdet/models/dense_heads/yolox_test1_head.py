@@ -489,8 +489,9 @@ class YOLOX_test1_Head(BaseDenseHead):
         for i in range(self.num_experts):
             task_idx = distribute_idx[i]
             cls_scores, bbox_preds, objectnesses = experts_output_list[i]
+            # random pick
             if task_idx is None:
-                continue
+                task_idx = torch.randint(0, len(batch_img_metas), (1,))
             cls_scores = [cls_score[task_idx] for cls_score in cls_scores]
             bbox_preds = [bbox_pred[task_idx] for bbox_pred in bbox_preds]
             objectnesses = [objectness[task_idx] for objectness in objectnesses]
