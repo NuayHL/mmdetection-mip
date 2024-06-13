@@ -299,6 +299,8 @@ class YOLOX_test1_Head(BaseDenseHead):
                                                   rescale=rescale,
                                                   with_nms=with_nms)
             for idx, batch_idx in enumerate(task_idx.tolist()):
+                if len(predicts_list[idx]) == 0:
+                    continue
                 if result_list[batch_idx] is None:
                     result_list[batch_idx] = predicts_list[idx]
                 else:
