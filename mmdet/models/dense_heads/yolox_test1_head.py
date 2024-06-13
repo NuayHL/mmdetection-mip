@@ -299,12 +299,15 @@ class YOLOX_test1_Head(BaseDenseHead):
                                                   rescale=rescale,
                                                   with_nms=with_nms)
             for idx, batch_idx in enumerate(task_idx.tolist()):
-                if len(predicts_list[idx]) == 0:
-                    continue
+                # ensuring that the instance is not None even if empty
                 if result_list[batch_idx] is None:
                     result_list[batch_idx] = predicts_list[idx]
                 else:
-                    result_list[batch_idx] = result_list[batch_idx].cat(list(predicts_list[idx]))
+                    if len(predicts_list[idx]) == 0:
+                        continue
+                    else:
+                        result_list[batch_idx] = result_list[batch_idx].cat(list(predicts_list[idx]))
+
         # Doing nms here
         for idx, img_meta in enumerate(batch_img_metas):
             result_list[idx] = self._bbox_post_process(results=result_list[idx],
@@ -489,7 +492,7 @@ class YOLOX_test1_Head(BaseDenseHead):
         for i in range(self.num_experts):
             task_idx = distribute_idx[i]
             cls_scores, bbox_preds, objectnesses = experts_output_list[i]
-            # random pick
+            # random pick futher needs to be improved
             if task_idx is None:
                 task_idx = torch.randint(0, len(batch_img_metas), (1,))
             cls_scores = [cls_score[task_idx] for cls_score in cls_scores]
