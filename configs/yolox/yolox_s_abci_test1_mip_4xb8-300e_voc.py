@@ -163,13 +163,13 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=16,
+    batch_size=8,
     num_workers=10,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=train_dataset)
 val_dataloader = dict(
-    batch_size=16,
+    batch_size=8,
     num_workers=10,
     persistent_workers=True,
     drop_last=False,
