@@ -5,9 +5,12 @@ _base_ = [
 
 img_scale = (640, 640)  # width, height
 
+num_experts = 5
+num_selects = 3
+
 # model settings
 model = dict(
-    type='YOLOX',
+    type='YOLOX_test1_mip',
     data_preprocessor=dict(
         type='DetDataPreprocessor',
         pad_size_divisor=32,
@@ -19,14 +22,22 @@ model = dict(
                 interval=10)
         ]),
     backbone=dict(
-        type='CSPDarknet',
-        deepen_factor=0.33,
-        widen_factor=0.5,
-        out_indices=(2, 3, 4),
-        use_depthwise=False,
-        spp_kernal_sizes=(5, 9, 13),
-        norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
-        act_cfg=dict(type='Swish'),
+        type='BackboneWithGate',
+        backbone_cfg=dict(
+            type='CSPDarknet',
+            deepen_factor=0.33,
+            widen_factor=0.5,
+            out_indices=(2, 3, 4),
+            use_depthwise=False,
+            spp_kernal_sizes=(5, 9, 13),
+            norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
+            act_cfg=dict(type='Swish'),),
+        gate_cfg=dict(
+            type='Selector_test1',
+            input_channels=512,
+            num_experts=num_experts,
+            dropout=0.2,
+        )
     ),
     neck=dict(
         type='YOLOXPAFPN',
@@ -38,12 +49,14 @@ model = dict(
         norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
         act_cfg=dict(type='Swish')),
     bbox_head=dict(
-        type='YOLOXHead',
-        num_classes=80,
+        type='YOLOX_test1_Head',
+        num_classes=20,
         in_channels=128,
         feat_channels=128,
         stacked_convs=2,
         strides=(8, 16, 32),
+        num_experts=num_experts,
+        num_selects=num_selects,
         use_depthwise=False,
         norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
         act_cfg=dict(type='Swish'),
@@ -63,7 +76,8 @@ model = dict(
             use_sigmoid=True,
             reduction='sum',
             loss_weight=1.0),
-        loss_l1=dict(type='L1Loss', reduction='sum', loss_weight=1.0)),
+        loss_l1=dict(type='L1Loss', reduction='sum', loss_weight=1.0),
+        loss_gate=dict(type='CV_Squared_Loss', loss_weight=1.0),),
     train_cfg=dict(assigner=dict(type='SimOTAAssigner', center_radius=2.5)),
     # In order to align the source code, the threshold of the val phase is
     # 0.01, and the threshold of the test phase is 0.001.
@@ -156,7 +170,7 @@ train_dataloader = dict(
     dataset=train_dataset)
 val_dataloader = dict(
     batch_size=32,
-    num_workers=16,
+    num_workers=6,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -180,7 +194,7 @@ test_evaluator = val_evaluator
 # training settings
 max_epochs = 300
 num_last_epochs = 15
-interval = 10
+interval = 5
 
 train_cfg = dict(max_epochs=max_epochs, val_interval=interval)
 
