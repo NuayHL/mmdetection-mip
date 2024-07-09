@@ -519,7 +519,8 @@ class YOLOX_test2_Head(BaseDenseHead):
                                                              batch_gt_instances_ignore_i)
             selected_obj_loss[:, i] = selected_obj_loss[:, i].scatter(0, task_idx, _obj_loss_label)
             loss_dict = dict_sum_up(loss_dict, _loss_dict)
-        selected_obj_loss = selected_obj_loss[selected_obj_loss != 0].view(selected_obj_loss.size(0), -1)
+        batch_indices = torch.arange(selected_obj_loss.size(0), device=selected_idx.device).unsqueeze(1)
+        selected_obj_loss = selected_obj_loss[batch_indices, selected_idx]
         selected_obj_loss = torch.softmax(selected_obj_loss, dim=1)
         selected_fin_obj_loss = torch.zeros_like(gate_value, requires_grad=False).type_as(gate_value)
         selected_fin_obj_loss = selected_fin_obj_loss.scatter(1, selected_idx, selected_obj_loss)
