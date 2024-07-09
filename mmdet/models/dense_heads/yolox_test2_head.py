@@ -100,6 +100,11 @@ class YOLOX_test2_Head(BaseDenseHead):
                 type='L1Loss', reduction='sum', loss_weight=1.0),
             loss_gate: ConfigType = dict(
                 type='CV_Squared_Loss', loss_weight=0.1),
+            loss_gate_obj_loss: ConfigType = dict(
+                type='CrossEntropyLoss',
+                use_sigmoid=False,
+                reduction='mean',
+                loss_weight=1.0),
             train_cfg: OptConfigType = None,
             test_cfg: OptConfigType = None,
             init_cfg: OptMultiConfig = dict(
@@ -134,6 +139,7 @@ class YOLOX_test2_Head(BaseDenseHead):
         self.loss_bbox: nn.Module = MODELS.build(loss_bbox)
         self.loss_obj: nn.Module = MODELS.build(loss_obj)
         self.loss_gate: nn.Module = MODELS.build(loss_gate)
+        self.loss_gate_obj_loss:nn.Module = MODELS.build(loss_gate_obj_loss)
 
         self.use_l1 = False  # This flag will be modified by hooks.
         self.loss_l1: nn.Module = MODELS.build(loss_l1)
@@ -488,27 +494,39 @@ class YOLOX_test2_Head(BaseDenseHead):
                      batch_gt_instances_ignore: OptInstanceList = None) -> dict:
         gate_value, topk_idx = gate_value_and_topk_idx
         distribute_idx = self.distribute_to_experts(topk_idx=topk_idx)
+
+        selected_obj_loss = torch.zeros_like(gate_value, requires_grad=False).type_as(gate_value)
+        selected_idx, _ = torch.sort(topk_idx, dim=1)
+
         loss_dict = dict()
         for i in range(self.num_experts):
             task_idx = distribute_idx[i]
             cls_scores, bbox_preds, objectnesses = experts_output_list[i]
             # random pick futher needs to be improved
             if task_idx is None:
-                task_idx = torch.randint(0, len(batch_img_metas), (1,))
+                task_idx = torch.randint(0, len(batch_img_metas), (1,), device=topk_idx.device)
             cls_scores = [cls_score[task_idx] for cls_score in cls_scores]
             bbox_preds = [bbox_pred[task_idx] for bbox_pred in bbox_preds]
             objectnesses = [objectness[task_idx] for objectness in objectnesses]
             batch_gt_instances_i = list_slice(task_idx, batch_gt_instances)
             batch_img_metas_i = list_slice(task_idx, batch_img_metas)
             batch_gt_instances_ignore_i = list_slice(task_idx, batch_gt_instances_ignore)
-            _loss_dict = self._loss_by_feat(cls_scores,
-                                            bbox_preds,
-                                            objectnesses,
-                                            batch_gt_instances_i,
-                                            batch_img_metas_i,
-                                            batch_gt_instances_ignore_i)
+            _loss_dict, _obj_loss_label = self._loss_by_feat(cls_scores,
+                                                             bbox_preds,
+                                                             objectnesses,
+                                                             batch_gt_instances_i,
+                                                             batch_img_metas_i,
+                                                             batch_gt_instances_ignore_i)
+            selected_obj_loss[:, i] = selected_obj_loss[:, i].scatter(0, task_idx, _obj_loss_label)
             loss_dict = dict_sum_up(loss_dict, _loss_dict)
+        selected_obj_loss = selected_obj_loss[selected_obj_loss != 0].view(selected_obj_loss.size(0), -1)
+        selected_obj_loss = torch.softmax(selected_obj_loss, dim=1)
+        selected_fin_obj_loss = torch.zeros_like(gate_value, requires_grad=False).type_as(gate_value)
+        selected_fin_obj_loss = selected_fin_obj_loss.scatter(1, selected_idx, selected_obj_loss)
+        loss_dict['loss_gate_obj'] = self.loss_gate_obj_loss(gate_value, selected_fin_obj_loss)
+
         loss_dict['loss_gate'] = self.loss_gate(gate_value)
+
         return loss_dict
 
     def gate_value_to_topk(self, gate_value):
@@ -517,6 +535,9 @@ class YOLOX_test2_Head(BaseDenseHead):
             current is the easiest implement
 
             input: torch shape (batch_size, num_experts)
+            return:
+                fin_gate_value: for load balance loss
+                topk_idx: for distribution to each experts
         """
         top_logists, topk_idx = gate_value.topk(self.num_selects, dim=1)
         top_gate_value = self.softmax(top_logists)
@@ -545,7 +566,7 @@ class YOLOX_test2_Head(BaseDenseHead):
             objectnesses: Sequence[Tensor],
             batch_gt_instances: Sequence[InstanceData],
             batch_img_metas: Sequence[dict],
-            batch_gt_instances_ignore: OptInstanceList = None) -> dict:
+            batch_gt_instances_ignore: OptInstanceList = None):
         """Compute the loss of each expert,
             Add the distribute_batch_idx to calculate certain idx.
 
@@ -573,6 +594,7 @@ class YOLOX_test2_Head(BaseDenseHead):
                 Defaults to None.
         Returns:
             dict[str, Tensor]: A dictionary of losses.
+            tensor[num_image]: obj_loss of each assigned data
         """
         num_imgs = len(batch_img_metas)
         if batch_gt_instances_ignore is None:
@@ -621,34 +643,20 @@ class YOLOX_test2_Head(BaseDenseHead):
             device=flatten_cls_preds.device)
         num_total_samples = max(reduce_mean(num_pos), 1.0)
 
-        # pos_masks = torch.cat(pos_masks, 0)        # list( (8400) )
-        # cls_targets = torch.cat(cls_targets, 0)    # list( (pos_num, 20) )
+        pos_masks = torch.cat(pos_masks, 0)        # list( (8400) )
+        cls_targets = torch.cat(cls_targets, 0)    # list( (pos_num, 20) )
         # obj_targets = torch.cat(obj_targets, 0)    # list( (8400, 1) )
-        # bbox_targets = torch.cat(bbox_targets, 0)  # list( (pos_num, 4))
-
         obj_targets = torch.cat([obj_target.permute(1, 0) for obj_target in obj_targets], 0)
+        bbox_targets = torch.cat(bbox_targets, 0)  # list( (pos_num, 4))
 
         if self.use_l1:
-            # l1_targets = torch.cat(l1_targets, 0)
-            pass
+            l1_targets = torch.cat(l1_targets, 0)  # list( (pos_num, 4))
 
-        loss_obj = self.loss_obj(flatten_objectness, obj_targets, reduction_override='none') / num_total_samples
-        for pos_mask in pos_masks:
-            num_pos_per_slice = torch.sum(pos_mask)
-            if num_pos_per_slice > 0:
-                loss_cls = self.loss_cls(
-                    flatten_cls_preds.view(-1, self.num_classes)[pos_masks],
-                    cls_targets) / num_total_samples
-                loss_bbox = self.loss_bbox(
-                    flatten_bboxes.view(-1, 4)[pos_masks],
-                    bbox_targets) / num_total_samples
-            else:
-                # Avoid cls and reg branch not participating in the gradient
-                # propagation when there is no ground-truth in the images.
-                # For more details, please refer to
-                # https://github.com/open-mmlab/mmdetection/issues/7298
-                loss_cls = flatten_cls_preds.sum() * 0
-                loss_bbox = flatten_bboxes.sum() * 0
+        loss_obj = torch.sum(self.loss_obj(flatten_objectness, obj_targets, reduction_override='none'), dim=1)
+        loss_obj_label = loss_obj.detach()  # for gate output label
+        loss_obj = torch.sum(loss_obj) / num_total_samples
+
+        # loss_obj = self.loss_obj(flatten_objectness, obj_targets, reduction_override='none') / num_total_samples
 
         if num_pos > 0:
             loss_cls = self.loss_cls(
@@ -681,7 +689,7 @@ class YOLOX_test2_Head(BaseDenseHead):
                 loss_l1 = flatten_bbox_preds.sum() * 0
             loss_dict.update(loss_l1=loss_l1)
 
-        return loss_dict
+        return loss_dict, loss_obj_label
 
     @torch.no_grad()
     def _get_targets_single(
