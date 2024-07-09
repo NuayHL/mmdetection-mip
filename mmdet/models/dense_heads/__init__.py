@@ -54,6 +54,7 @@ from .yolof_head import YOLOFHead
 from .yolox_head import YOLOXHead
 
 from .yolox_test1_head import YOLOX_test1_Head
+from .yolox_test2_head import YOLOX_test2_Head
 
 __all__ = [
     'AnchorFreeHead', 'AnchorHead', 'GuidedAnchorHead', 'FeatureAdaption',
@@ -70,5 +71,7 @@ __all__ = [
     'CenterNetUpdateHead', 'RTMDetHead', 'RTMDetSepBNHead', 'CondInstBboxHead',
     'CondInstMaskHead', 'RTMDetInsHead', 'RTMDetInsSepBNHead',
     'BoxInstBboxHead', 'BoxInstMaskHead', 'ConditionalDETRHead', 'DINOHead',
-    'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead'
+    'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead',
+
+    'YOLOX_test1_Head', 'YOLOX_test2_Head'
 ]
