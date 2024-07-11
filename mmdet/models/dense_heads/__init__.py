@@ -53,8 +53,10 @@ from .yolo_head import YOLOV3Head
 from .yolof_head import YOLOFHead
 from .yolox_head import YOLOXHead
 
+from .alter_para_modules import AlterConvModule
 from .yolox_test1_head import YOLOX_test1_Head
 from .yolox_test2_head import YOLOX_test2_Head
+from .yolox_test3_head import YOLOX_test3_Head
 
 __all__ = [
     'AnchorFreeHead', 'AnchorHead', 'GuidedAnchorHead', 'FeatureAdaption',
@@ -73,5 +75,6 @@ __all__ = [
     'BoxInstBboxHead', 'BoxInstMaskHead', 'ConditionalDETRHead', 'DINOHead',
     'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead',
 
-    'YOLOX_test1_Head', 'YOLOX_test2_Head'
+    'AlterConvModule',
+    'YOLOX_test1_Head', 'YOLOX_test2_Head', 'YOLOX_test3_Head'
 ]

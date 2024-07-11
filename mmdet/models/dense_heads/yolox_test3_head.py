@@ -21,6 +21,8 @@ from ..task_modules.samplers import PseudoSampler
 from ..utils import multi_apply
 from .base_dense_head import BaseDenseHead
 
+from .alter_para_modules import AlterConvModule
+
 
 @MODELS.register_module()
 class YOLOX_test3_Head(BaseDenseHead):
@@ -228,6 +230,7 @@ class YOLOX_test3_Head(BaseDenseHead):
                                           expert['multi_level_conv_obj']):
                 conv_cls.bias.data.fill_(bias_init)
                 conv_obj.bias.data.fill_(bias_init)
+        #TODO
 
     def forward_single(self, x: Tensor, cls_convs: nn.Module,
                        reg_convs: nn.Module, conv_cls: nn.Module,
