@@ -29,3 +29,16 @@ class AlterConvModule(ConvModule):
                 x = self.activate(x)
             layer_index += 1
         return x
+
+@MODELS.register_module()
+class AlterModuleSeq(nn.Module):
+    def __init__(self, *modules):
+        super().__init__()
+        self.model_seq = nn.ModuleList(*modules)
+        self.lenth = len(self.model_seq)
+
+    def forward(self, x, add_pars: list[dict]):
+        assert len(add_pars) == self.lenth
+        for model, add_par in zip(self.model_seq, add_pars):
+            x = model(x, **add_par)
+        return x
