@@ -21,7 +21,7 @@ from ..task_modules.samplers import PseudoSampler
 from ..utils import multi_apply
 from .base_dense_head import BaseDenseHead
 
-from .alter_para_modules import AlterConvModule
+from .alter_para_modules import AlterConvModule, AlterConv2D, AlterModuleSeq
 
 
 @MODELS.register_module()
@@ -161,45 +161,64 @@ class YOLOX_test3_Head(BaseDenseHead):
 
     def _init_all(self):
         """Initialize the experts according to the num of experts"""
-        self.experts = nn.ModuleList()
+        self._build_shared_head()
+        self.experts = nn.ParameterList()
         for _ in range(self.num_experts):
             self.experts.append(self._init_experts())
 
     def _init_experts(self):
         """Initialize one heads/experts for all level feature maps."""
-        temp_head = nn.ModuleDict()
+        temp_head = nn.ParameterDict()
 
-        multi_level_cls_convs = nn.ModuleList()
-        multi_level_reg_convs = nn.ModuleList()
-        multi_level_conv_cls = nn.ModuleList()
-        multi_level_conv_reg = nn.ModuleList()
-        multi_level_conv_obj = nn.ModuleList()
+        multi_level_cls_convs = nn.ParameterList()
+        multi_level_reg_convs = nn.ParameterList()
+        multi_level_conv_cls  = nn.ParameterList()
+        multi_level_conv_reg  = nn.ParameterList()
+        multi_level_conv_obj  = nn.ParameterList()
         for _ in self.strides:
-            multi_level_cls_convs.append(self._build_stacked_convs())
-            multi_level_reg_convs.append(self._build_stacked_convs())
-            conv_cls, conv_reg, conv_obj = self._build_predictor()
-            multi_level_conv_cls.append(conv_cls)
-            multi_level_conv_reg.append(conv_reg)
-            multi_level_conv_obj.append(conv_obj)
+            _temp_cls_bias1 = nn.ParameterDict({'bias': nn.Parameter(torch.zeros(self.feat_channels))})
+            _temp_cls_bias2 = nn.ParameterDict({'bias': nn.Parameter(torch.zeros(self.feat_channels))})
+            multi_level_cls_convs.append(nn.ParameterList([_temp_cls_bias1, _temp_cls_bias2]))
+
+            _temp_cls_bias1 = nn.ParameterDict({'bias': nn.Parameter(torch.zeros(self.feat_channels))})
+            _temp_cls_bias2 = nn.ParameterDict({'bias': nn.Parameter(torch.zeros(self.feat_channels))})
+            multi_level_reg_convs.append(nn.ParameterList([_temp_cls_bias1, _temp_cls_bias2]))
+
+            multi_level_conv_cls.append({'bias': nn.Parameter(torch.zeros(self.num_classes))})
+            multi_level_conv_reg.append({'bias': nn.Parameter(torch.zeros(4))})
+            multi_level_conv_obj.append({'bias': nn.Parameter(torch.zeros(1))})
 
         temp_head['multi_level_cls_convs'] = multi_level_cls_convs
         temp_head['multi_level_reg_convs'] = multi_level_reg_convs
         temp_head['multi_level_conv_cls'] = multi_level_conv_cls
         temp_head['multi_level_conv_reg'] = multi_level_conv_reg
         temp_head['multi_level_conv_obj'] = multi_level_conv_obj
+
         return temp_head
 
-    def _build_stacked_convs(self) -> nn.Sequential:
+    def _build_shared_head(self):
+        self.multi_level_cls_convs = nn.ModuleList()
+        self. multi_level_reg_convs = nn.ModuleList()
+        self.multi_level_conv_cls = nn.ModuleList()
+        self.multi_level_conv_reg = nn.ModuleList()
+        self.multi_level_conv_obj = nn.ModuleList()
+        for _ in self.strides:
+            self.multi_level_cls_convs.append(self._build_stacked_convs())
+            self.multi_level_reg_convs.append(self._build_stacked_convs())
+            conv_cls, conv_reg, conv_obj = self._build_predictor()
+            self.multi_level_conv_cls.append(conv_cls)
+            self.multi_level_conv_reg.append(conv_reg)
+            self.multi_level_conv_obj.append(conv_obj)
+
+    def _build_stacked_convs(self):
         """Initialize conv layers of a single level head."""
-        conv = DepthwiseSeparableConvModule \
-            if self.use_depthwise else ConvModule
-        stacked_convs = []
+        assert not self.use_depthwise
+        assert not self.dcn_on_last_conv
+        conv = AlterConvModule
+        stacked_convs = list()
         for i in range(self.stacked_convs):
             chn = self.in_channels if i == 0 else self.feat_channels
-            if self.dcn_on_last_conv and i == self.stacked_convs - 1:
-                conv_cfg = dict(type='DCNv2')
-            else:
-                conv_cfg = self.conv_cfg
+            conv_cfg = self.conv_cfg
             stacked_convs.append(
                 conv(
                     chn,
@@ -211,13 +230,13 @@ class YOLOX_test3_Head(BaseDenseHead):
                     norm_cfg=self.norm_cfg,
                     act_cfg=self.act_cfg,
                     bias=self.conv_bias))
-        return nn.Sequential(*stacked_convs)
+        return AlterModuleSeq(*stacked_convs)
 
     def _build_predictor(self) -> Tuple[nn.Module, nn.Module, nn.Module]:
         """Initialize predictor layers of a single level head."""
-        conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
-        conv_reg = nn.Conv2d(self.feat_channels, 4, 1)
-        conv_obj = nn.Conv2d(self.feat_channels, 1, 1)
+        conv_cls = AlterConv2D(self.feat_channels, self.cls_out_channels, 1)
+        conv_reg = AlterConv2D(self.feat_channels, 4, 1)
+        conv_obj = AlterConv2D(self.feat_channels, 1, 1)
         return conv_cls, conv_reg, conv_obj
 
     def init_weights(self) -> None:
@@ -228,23 +247,23 @@ class YOLOX_test3_Head(BaseDenseHead):
         for expert in self.experts:
             for conv_cls, conv_obj in zip(expert['multi_level_conv_cls'],
                                           expert['multi_level_conv_obj']):
-                conv_cls.bias.data.fill_(bias_init)
-                conv_obj.bias.data.fill_(bias_init)
-        #TODO
+                conv_cls['bias'].data.fill_(bias_init)
+                conv_obj['bias'].data.fill_(bias_init)
 
-    def forward_single(self, x: Tensor, cls_convs: nn.Module,
-                       reg_convs: nn.Module, conv_cls: nn.Module,
-                       conv_reg: nn.Module,
-                       conv_obj: nn.Module) -> Tuple[Tensor, Tensor, Tensor]:
+    def forward_single(self, x: Tensor,
+                       cls_convs: nn.Module, cls_convs_bias: nn.ParameterList,
+                       reg_convs: nn.Module, reg_convs_bias: nn.ParameterList,
+                       conv_cls: nn.Module, conv_cls_bias: nn.ParameterDict,
+                       conv_reg: nn.Module, conv_reg_bias: nn.ParameterDict,
+                       conv_obj: nn.Module, conv_obj_bias: nn.ParameterDict) -> Tuple[Tensor, Tensor, Tensor]:
         """Forward feature of a single scale level."""
 
-        cls_feat = cls_convs(x)
-        reg_feat = reg_convs(x)
+        cls_feat = cls_convs(x, cls_convs_bias)
+        reg_feat = reg_convs(x, reg_convs_bias)
 
-        cls_score = conv_cls(cls_feat)
-        bbox_pred = conv_reg(reg_feat)
-        objectness = conv_obj(reg_feat)
-
+        cls_score = conv_cls(cls_feat, conv_cls_bias['bias'])
+        bbox_pred = conv_reg(reg_feat, conv_reg_bias['bias'])
+        objectness = conv_obj(reg_feat, conv_obj_bias['bias'])
         return cls_score, bbox_pred, objectness
 
     def forward(self, x: Tuple[Tensor]):
@@ -266,6 +285,11 @@ class YOLOX_test3_Head(BaseDenseHead):
         x = x[:-1]
 
         return ([multi_apply(self.forward_single, x,
+                             self.multi_level_cls_convs,
+                             self.multi_level_reg_convs,
+                             self.multi_level_conv_cls,
+                             self.multi_level_conv_reg,
+                             self.multi_level_conv_obj,
                              _expert['multi_level_cls_convs'],
                              _expert['multi_level_reg_convs'],
                              _expert['multi_level_conv_cls'],
