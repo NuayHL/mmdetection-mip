@@ -256,8 +256,8 @@ class YOLOX_test3_Head(BaseDenseHead):
                 conv_obj.data.fill_(bias_init)
 
     def forward_single(self, x: Tensor,
-                       cls_convs: nn.Module, cls_convs_bias: list[dict],
-                       reg_convs: nn.Module, reg_convs_bias: list[dict],
+                       cls_convs: nn.Module, cls_convs_bias: List[dict],
+                       reg_convs: nn.Module, reg_convs_bias: List[dict],
                        conv_cls: nn.Module, conv_cls_bias: nn.Parameter,
                        conv_reg: nn.Module, conv_reg_bias: nn.Parameter,
                        conv_obj: nn.Module, conv_obj_bias: nn.Parameter) -> Tuple[Tensor, Tensor, Tensor]:
