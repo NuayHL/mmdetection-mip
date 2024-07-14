@@ -93,3 +93,15 @@ class KnowledgeDistillationKLDivLoss(nn.Module):
             T=self.T)
 
         return loss_kd
+
+@MODELS.register_module()
+class KLDivLoss(nn.Module):
+    def __init__(self, size_average=None, reduce=None, reduction: str = 'mean', log_target: bool = False):
+        super().__init__()
+        self._loss = nn.KLDivLoss(size_average=size_average,
+                                  reduce=reduce,
+                                  reduction=reduction,
+                                  log_target=log_target)
+
+    def forward(self, x, target):
+        return self._loss(x, target)

@@ -14,7 +14,7 @@ from .gfocal_loss import DistributionFocalLoss, QualityFocalLoss
 from .ghm_loss import GHMC, GHMR
 from .iou_loss import (BoundedIoULoss, CIoULoss, DIoULoss, EIoULoss, GIoULoss,
                        IoULoss, SIoULoss, bounded_iou_loss, iou_loss)
-from .kd_loss import KnowledgeDistillationKLDivLoss
+from .kd_loss import KnowledgeDistillationKLDivLoss, KLDivLoss
 from .l2_loss import L2Loss
 from .margin_loss import MarginL2Loss
 from .mse_loss import MSELoss, mse_loss
@@ -41,5 +41,5 @@ __all__ = [
     'KnowledgeDistillationKLDivLoss', 'SeesawLoss', 'DiceLoss', 'EQLV2Loss',
     'MarginL2Loss', 'MultiPosCrossEntropyLoss', 'L2Loss', 'TripletLoss',
     'DDQAuxLoss', 'CrossEntropyCustomLoss', 'FocalCustomLoss',
-    'CV_Squared_Loss'
+    'CV_Squared_Loss', 'KLDivLoss'
 ]

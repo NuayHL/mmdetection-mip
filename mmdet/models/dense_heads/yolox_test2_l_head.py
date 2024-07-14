@@ -101,10 +101,11 @@ class YOLOX_test2_l_Head(BaseDenseHead):
             loss_gate: ConfigType = dict(
                 type='CV_Squared_Loss', loss_weight=0.1),
             loss_gate_obj_loss: ConfigType = dict(
-                type='CrossEntropyLoss',
-                use_sigmoid=False,
+                type='KLDivLoss',
+                size_average=None,
+                reduce=None,
                 reduction='mean',
-                loss_weight=1.0),
+                log_target=False),
             train_cfg: OptConfigType = None,
             test_cfg: OptConfigType = None,
             init_cfg: OptMultiConfig = dict(
