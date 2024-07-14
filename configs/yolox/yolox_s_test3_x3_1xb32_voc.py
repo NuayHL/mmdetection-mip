@@ -33,7 +33,7 @@ model = dict(
             norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
             act_cfg=dict(type='Swish'),),
         gate_cfg=dict(
-            type='Selector_test1',
+            type='Selector_test2',
             input_channels=512,
             num_experts=num_experts,
             dropout=0.2,
@@ -49,7 +49,7 @@ model = dict(
         norm_cfg=dict(type='BN', momentum=0.03, eps=0.001),
         act_cfg=dict(type='Swish')),
     bbox_head=dict(
-        type='YOLOX_test1_Head',
+        type='YOLOX_test3_Head',
         num_classes=20,
         in_channels=128,
         feat_channels=128,

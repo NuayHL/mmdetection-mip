@@ -42,7 +42,7 @@ class AlterConv2D(nn.Module):
                  padding=0,
                  dilation=1,
                  groups=1,
-                 bias=True,
+                 bias=False,
                  padding_mode='zeros',
                  device=None,
                  dtype=None):
@@ -54,7 +54,7 @@ class AlterConv2D(nn.Module):
                               padding=padding,
                               dilation=dilation,
                               groups=groups,
-                              bias=bias,
+                              bias=False,
                               padding_mode=padding_mode,
                               device=device,
                               dtype=dtype)
@@ -68,8 +68,10 @@ class AlterConv2D(nn.Module):
 class AlterModuleSeq(nn.Module):
     def __init__(self, *modules):
         super().__init__()
-        self.model_seq = nn.ModuleList(*modules)
-        self.lenth = len(self.model_seq)
+        self.model_seq = nn.ModuleList(modules)
+
+    def __len__(self):
+        return len(self.model_seq)
 
     def init_weights(self):
         for module in self.model_seq:
@@ -79,7 +81,7 @@ class AlterModuleSeq(nn.Module):
                 warnings.warn(f'The module {type(module)} has no \'init_weight\' func')
 
     def forward(self, x, add_pars: list[dict]):
-        assert len(add_pars) == self.lenth
+        assert len(add_pars) == len(self)
         for model, add_par in zip(self.model_seq, add_pars):
             x = model(x, **add_par)
         return x

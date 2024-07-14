@@ -1,4 +1,12 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import os
+
+# change to the local mmdet
+import sys
+_current_dir = os.getcwd()
+print(_current_dir)
+sys.path.insert(0, _current_dir)
+
 import argparse
 import tempfile
 from functools import partial

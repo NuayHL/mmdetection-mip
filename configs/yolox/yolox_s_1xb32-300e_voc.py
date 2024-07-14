@@ -39,7 +39,7 @@ model = dict(
         act_cfg=dict(type='Swish')),
     bbox_head=dict(
         type='YOLOXHead',
-        num_classes=80,
+        num_classes=20,
         in_channels=128,
         feat_channels=128,
         stacked_convs=2,
