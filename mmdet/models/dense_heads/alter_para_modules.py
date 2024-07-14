@@ -80,7 +80,8 @@ class AlterModuleSeq(nn.Module):
             else:
                 warnings.warn(f'The module {type(module)} has no \'init_weight\' func')
 
-    def forward(self, x, add_pars: list[dict]):
+    def forward(self, x, add_pars):
+        """ add_pars: list[dict] """
         assert len(add_pars) == len(self)
         for model, add_par in zip(self.model_seq, add_pars):
             x = model(x, **add_par)
