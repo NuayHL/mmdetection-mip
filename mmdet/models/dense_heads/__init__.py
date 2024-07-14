@@ -57,6 +57,8 @@ from .alter_para_modules import AlterConvModule
 from .yolox_test1_head import YOLOX_test1_Head
 from .yolox_test2_head import YOLOX_test2_Head
 from .yolox_test3_head import YOLOX_test3_Head
+from .yolox_test2_l_head import YOLOX_test2_l_Head
+from .yolox_test3_l_head import YOLOX_test3_l_Head
 
 __all__ = [
     'AnchorFreeHead', 'AnchorHead', 'GuidedAnchorHead', 'FeatureAdaption',
@@ -76,5 +78,6 @@ __all__ = [
     'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead',
 
     'AlterConvModule',
-    'YOLOX_test1_Head', 'YOLOX_test2_Head', 'YOLOX_test3_Head'
+    'YOLOX_test1_Head', 'YOLOX_test2_Head', 'YOLOX_test3_Head', 'YOLOX_test2_l_Head',
+    'YOLOX_test3_l_Head'
 ]
