@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from typing import Optional
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -96,12 +97,17 @@ class KnowledgeDistillationKLDivLoss(nn.Module):
 
 @MODELS.register_module()
 class KLDivLoss(nn.Module):
-    def __init__(self, size_average=None, reduce=None, reduction: str = 'mean', log_target: bool = False):
+    def __init__(self, size_average=None, reduce=None, reduction: str = 'batchmean', log_target: bool = False,
+                 log_preds: bool = False, loss_weight: float = 0.1):
         super().__init__()
+        self._log_preds = log_preds
+        self._weight = loss_weight
         self._loss = nn.KLDivLoss(size_average=size_average,
                                   reduce=reduce,
                                   reduction=reduction,
                                   log_target=log_target)
 
     def forward(self, x, target):
-        return self._loss(x, target)
+        if not self._log_preds:
+            x = torch.log(x)
+        return self._loss(x, target) * self._weight
