@@ -532,7 +532,10 @@ class YOLOX_test2_l_refine_Head(BaseDenseHead):
         batch_indices = torch.arange(selected_obj_loss.size(0), device=selected_idx.device).unsqueeze(1)
         selected_obj_loss = selected_obj_loss[batch_indices, selected_idx]  # select original distributed idx
 
-        selected_obj_loss = torch.softmax(selected_obj_loss, dim=1)  # compute softmax
+        max_vals, _ = torch.max(selected_obj_loss, dim=1, keepdim=True)
+        selected_obj_loss = selected_obj_loss / max_vals
+
+        selected_obj_loss = torch.softmax(-selected_obj_loss, dim=1)  # compute softmax
 
         shrink_gate_value = gate_value[batch_indices, selected_idx]
         # # recover the label to the gate_value shape

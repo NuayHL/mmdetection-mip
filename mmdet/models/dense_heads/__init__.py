@@ -59,6 +59,7 @@ from .yolox_test2_head import YOLOX_test2_Head
 from .yolox_test3_head import YOLOX_test3_Head
 from .yolox_test2_l_head import YOLOX_test2_l_Head
 from .yolox_test2_l_refine_head import YOLOX_test2_l_refine_Head
+from .yolox_test2_l_refine_soft_labe_head import YOLOX_test2_l_refine_soft_Head
 from .yolox_test3_l_head import YOLOX_test3_l_Head
 
 __all__ = [
@@ -80,5 +81,5 @@ __all__ = [
 
     'AlterConvModule',
     'YOLOX_test1_Head', 'YOLOX_test2_Head', 'YOLOX_test3_Head', 'YOLOX_test2_l_Head',
-    'YOLOX_test3_l_Head', 'YOLOX_test2_l_refine_Head'
+    'YOLOX_test3_l_Head', 'YOLOX_test2_l_refine_Head', 'yolox_test2_l_refine_soft_labe_head'
 ]
