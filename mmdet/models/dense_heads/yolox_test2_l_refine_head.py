@@ -74,6 +74,7 @@ class YOLOX_test2_l_refine_Head(BaseDenseHead):
             strides: Sequence[int] = (8, 16, 32),
             num_experts: int = 5,
             num_selects: int = 3,
+            temperature: float = 1.0,
             use_depthwise: bool = False,
             dcn_on_last_conv: bool = False,
             conv_bias: Union[bool, str] = 'auto',
@@ -104,7 +105,7 @@ class YOLOX_test2_l_refine_Head(BaseDenseHead):
                 type='KLDivLoss',
                 size_average=None,
                 reduce=None,
-                reduction='mean',
+                reduction='batchmean',
                 log_target=False,
                 log_preds=False,
                 loss_weight=1.0),
@@ -158,6 +159,7 @@ class YOLOX_test2_l_refine_Head(BaseDenseHead):
             self.sampler = PseudoSampler()
 
         self.softmax = nn.Softmax(dim=1)
+        self.temperature = temperature
         self._init_all()
 
     def _init_all(self):
@@ -533,8 +535,7 @@ class YOLOX_test2_l_refine_Head(BaseDenseHead):
         selected_obj_loss = selected_obj_loss[batch_indices, selected_idx]  # select original distributed idx
 
         max_vals, _ = torch.max(selected_obj_loss, dim=1, keepdim=True)
-        selected_obj_loss = selected_obj_loss / max_vals
-
+        selected_obj_loss = selected_obj_loss / max_vals * self.temperature
         selected_obj_loss = torch.softmax(-selected_obj_loss, dim=1)  # compute softmax
 
         shrink_gate_value = gate_value[batch_indices, selected_idx]
