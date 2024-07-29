@@ -1,6 +1,12 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import argparse
 import os
+import sys
+_current_dir = os.getcwd()
+print(_current_dir)
+print(sys.path)
+sys.path.insert(0, _current_dir)
+
+import argparse
 import os.path as osp
 import warnings
 from copy import deepcopy
