@@ -31,7 +31,7 @@ class ChangeTempHook(Hook):
         if is_model_wrapper(runner.model):
             model = model.module
             self.is_dist = True
-        assert hasattr(model, 'temperature'), (
+        assert hasattr(model.bbox_head, 'temperature'), (
             runner.logger.error(f'The module {runner.model_name}.bbox_head has no attribute \'temperature\'. '
                                 f'Considering delete \'ChangeTempHook\' hook in config'))
         self.init_temp = model.bbox_head.temperature
