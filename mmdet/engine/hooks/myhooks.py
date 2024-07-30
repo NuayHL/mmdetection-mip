@@ -40,10 +40,11 @@ class ChangeTempHook(Hook):
     def before_train_epoch(self, runner) -> None:
         self.current_epoch = runner.epoch
         _progress = 0.5 * (1 - math.cos((self.step + 1) * math.pi / self.max_epoch))
+        temp = _progress * self.increase_interval + self.init_temp
         if self.is_dist:
-            runner.model.module.bbox_head.temperature = _progress * self.increase_interval + self.init_temp
+            runner.model.module.bbox_head.temperature = temp
         else:
-            runner.model.bbox_head.temperature = _progress * self.increase_interval + self.init_temp
-        runner.logger.info(f'Epoch[{self.step}/{self.max_epoch}], model temp change to {runner.model.bbox_head.temperature}')
+            runner.model.bbox_head.temperature = temp
+        runner.logger.info(f'Epoch[{self.step}/{self.max_epoch}], model temp change to {temp}')
 
 
