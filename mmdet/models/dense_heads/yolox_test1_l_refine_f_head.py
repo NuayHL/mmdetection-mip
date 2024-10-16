@@ -23,7 +23,7 @@ from .base_dense_head import BaseDenseHead
 
 
 @MODELS.register_module()
-class YOLOX_test1_l_Head(BaseDenseHead):
+class YOLOX_test1_l_refine_f_Head(BaseDenseHead):
     """YOLOXHead head used in `YOLOX <https://arxiv.org/abs/2107.08430>`_.
 
     Args:
@@ -100,12 +100,6 @@ class YOLOX_test1_l_Head(BaseDenseHead):
                 type='L1Loss', reduction='sum', loss_weight=1.0),
             loss_gate: ConfigType = dict(
                 type='CV_Squared_Loss', loss_weight=0.1),
-            loss_gate_obj_loss: ConfigType = dict(
-                type='KLDivLoss',
-                size_average=None,
-                reduce=None,
-                reduction='mean',
-                log_target=False),
             train_cfg: OptConfigType = None,
             test_cfg: OptConfigType = None,
             init_cfg: OptMultiConfig = dict(
@@ -140,7 +134,6 @@ class YOLOX_test1_l_Head(BaseDenseHead):
         self.loss_bbox: nn.Module = MODELS.build(loss_bbox)
         self.loss_obj: nn.Module = MODELS.build(loss_obj)
         self.loss_gate: nn.Module = MODELS.build(loss_gate)
-        self.loss_gate_obj_loss:nn.Module = MODELS.build(loss_gate_obj_loss)
 
         self.use_l1 = False  # This flag will be modified by hooks.
         self.loss_l1: nn.Module = MODELS.build(loss_l1)
@@ -221,7 +214,7 @@ class YOLOX_test1_l_Head(BaseDenseHead):
 
     def init_weights(self) -> None:
         """Initialize weights of the head."""
-        super(YOLOX_test1_l_Head, self).init_weights()
+        super(YOLOX_test1_l_refine_f_Head, self).init_weights()
         # Use prior in model initialization to improve stability
         bias_init = bias_init_with_prob(0.01)
         for expert in self.experts:
@@ -262,38 +255,79 @@ class YOLOX_test1_l_Head(BaseDenseHead):
         """
         gate_value = x[-1]
         x = x[:-1]
+        batch_size = x[0].size(0)  # get batch size
 
-        gate_value, topk_idx = self.gate_value_to_topk(gate_value)
-        batch_size = topk_idx.size(0)
-        distribute_idx = self.distribute_to_experts(topk_idx=topk_idx)
+        gate_value, topk_idx, distributes, no_use_in_train = self.get_topk_and_distribute(gate_value)
 
-        raw_result = list()
+        final_obj_pre = None
+        final_bbox_pre = None
+        final_cls_pre = None
+        feature_map_size = None
 
         for i in range(self.num_experts):
-            task_idx = distribute_idx[i]
-            if task_idx is None:
-                if self.training:
-                    # move the random pick here
-                    task_idx = torch.randint(0, batch_size, (1,), device=topk_idx.device)
-                    distribute_idx[i] = task_idx
-                else:
-                    raw_result.append(None)
-                    continue
+            distributes_idx = distributes[i]
+            if distributes_idx is None:
+                continue
+            task_idx = distributes_idx[0]
+            num_in_batch = len(task_idx)
+            weight_idx = distributes_idx[1]
 
-            i_x = tuple([_x[task_idx] for _x in x])
+            i_x = tuple([_x[task_idx] for _x in x])  # selects the inputs in three level
 
-            raw_result.append(multi_apply(self.forward_single, i_x,
-                                          self.experts[i]['multi_level_cls_convs'],
-                                          self.experts[i]['multi_level_reg_convs'],
-                                          self.experts[i]['multi_level_conv_cls'],
-                                          self.experts[i]['multi_level_conv_reg'],
-                                          self.experts[i]['multi_level_conv_obj']))
+            cls_scores, bbox_preds, objectnesses = multi_apply(self.forward_single, i_x,
+                                                               self.experts[i]['multi_level_cls_convs'],
+                                                               self.experts[i]['multi_level_reg_convs'],
+                                                               self.experts[i]['multi_level_conv_cls'],
+                                                               self.experts[i]['multi_level_conv_reg'],
+                                                               self.experts[i]['multi_level_conv_obj'])
 
-        return raw_result, (gate_value, topk_idx, distribute_idx)
+            if feature_map_size is None:
+                feature_map_size = [cls_score.shape[2:] for cls_score in cls_scores]
+
+            flatten_cls_preds = [
+                cls_pred.permute(0, 2, 3, 1).reshape(num_in_batch, -1,
+                                                     self.cls_out_channels)
+                for cls_pred in cls_scores
+            ]
+            flatten_bbox_preds = [
+                bbox_pred.permute(0, 2, 3, 1).reshape(num_in_batch, -1, 4)
+                for bbox_pred in bbox_preds
+            ]
+            flatten_objectness = [
+                objectness.permute(0, 2, 3, 1).reshape(num_in_batch, -1)
+                for objectness in objectnesses
+            ]
+
+            flatten_cls_preds = torch.einsum('n,nij->nij', weight_idx, torch.cat(flatten_cls_preds, dim=1))
+            flatten_bbox_preds = torch.einsum('n,nij->nij', weight_idx, torch.cat(flatten_bbox_preds, dim=1))
+            flatten_objectness = torch.einsum('n,nj->nj', weight_idx, torch.cat(flatten_objectness, dim=1))
+
+            # initial the output
+            if final_cls_pre is None:
+                num_points = flatten_cls_preds.size(1)
+                num_cls = flatten_cls_preds.size(2)
+                _device = flatten_cls_preds.device
+                final_cls_pre = torch.zeros(batch_size, num_points, num_cls, requires_grad=True, device=_device).type_as(flatten_cls_preds)
+                final_bbox_pre = torch.zeros(batch_size, num_points, 4, requires_grad=True, device=_device).type_as(flatten_bbox_preds)
+                final_obj_pre = torch.zeros(batch_size, num_points, requires_grad=True, device=_device).type_as(flatten_objectness)
+
+            final_obj_pre = final_obj_pre.index_add(0, task_idx, flatten_objectness)
+            final_bbox_pre = final_bbox_pre.index_add(0, task_idx, flatten_bbox_preds)
+            final_cls_pre = final_cls_pre.index_add(0, task_idx, flatten_cls_preds)
+
+        mlvl_priors = self.prior_generator.grid_priors(
+            feature_map_size,
+            dtype=cls_scores[0].dtype,
+            device=cls_scores[0].device,
+            with_stride=True)
+        flatten_priors = torch.cat(mlvl_priors)
+
+        return ((final_cls_pre, final_bbox_pre, final_obj_pre, flatten_priors),
+                (gate_value, topk_idx, distributes, no_use_in_train))
 
     def predict_by_feat(self,
                         experts_output_list,
-                        gate_value_and_topk_idx,
+                        moe_mix_info,
                         batch_img_metas: Optional[List[dict]] = None,
                         cfg: Optional[ConfigDict] = None,
                         rescale: bool = False,
@@ -302,63 +336,34 @@ class YOLOX_test1_l_Head(BaseDenseHead):
         # always None
         cfg = self.test_cfg if cfg is None else cfg
 
-        gate_value, topk_idx, distribute_idx = gate_value_and_topk_idx
-        batch_lenth = len(batch_img_metas)
-        result_list = [None] * batch_lenth
-        for i in range(self.num_experts):
-            task_idx = distribute_idx[i]
-            # if no data sent to this expert
-            if task_idx is None:
-                continue
-            cls_scores, bbox_preds, objectnesses = experts_output_list[i]
-            batch_img_metas_i = list_slice(task_idx, batch_img_metas)
-
-            predicts_list = self._predict_by_feat(cls_scores,
-                                                  bbox_preds,
-                                                  objectnesses,
-                                                  batch_img_metas_i,
-                                                  cfg=cfg,
-                                                  rescale=rescale,
-                                                  with_nms=with_nms)
-            for idx, batch_idx in enumerate(task_idx.tolist()):
-                # ensuring that the instance is not None even if empty
-                if result_list[batch_idx] is None:
-                    result_list[batch_idx] = predicts_list[idx]
-                else:
-                    if len(predicts_list[idx]) == 0:
-                        continue
-                    else:
-                        result_list[batch_idx] = result_list[batch_idx].cat(list(predicts_list[idx]))
-
-        # Doing nms here
-        for idx, img_meta in enumerate(batch_img_metas):
-            result_list[idx] = self._bbox_post_process(results=result_list[idx],
-                                                       cfg=cfg,
-                                                       rescale=rescale,
-                                                       with_nms=with_nms,
-                                                       img_meta=img_meta)
+        gate_value, topk_idx, distributes, no_use_in_train = moe_mix_info
+        flatten_cls_preds, flatten_bbox_preds, flatten_objectness, flatten_priors = experts_output_list
+        result_list = self._predict_by_feat(flatten_cls_preds,
+                                            flatten_bbox_preds,
+                                            flatten_objectness,
+                                            flatten_priors,
+                                            batch_img_metas,
+                                            cfg=cfg,
+                                            rescale=rescale,
+                                            with_nms=with_nms)
         return result_list
 
     def _predict_by_feat(self,
-                        cls_scores: List[Tensor],
-                        bbox_preds: List[Tensor],
-                        objectnesses: Optional[List[Tensor]],
-                        batch_img_metas: Optional[List[dict]] = None,
-                        cfg: Optional[ConfigDict] = None,
-                        rescale: bool = False,
-                        with_nms: bool = True) -> List[InstanceData]:
+                         flatten_cls_preds,
+                         flatten_bbox_preds,
+                         flatten_objectness,
+                         flatten_priors,
+                         batch_img_metas: Optional[List[dict]] = None,
+                         cfg: Optional[ConfigDict] = None,
+                         rescale: bool = False,
+                         with_nms: bool = True) -> List[InstanceData]:
         """Transform a batch of output features extracted by the head into
         bbox results.
         Args:
-            cls_scores (list[Tensor]): Classification scores for all
-                scale levels, each is a 4D-tensor, has shape
-                (batch_size, num_priors * num_classes, H, W).
-            bbox_preds (list[Tensor]): Box energies / deltas for all
-                scale levels, each is a 4D-tensor, has shape
-                (batch_size, num_priors * 4, H, W).
-            objectnesses (list[Tensor], Optional): Score factor for
-                all scale level, each is a 4D-tensor, has shape
-                (batch_size, 1, H, W).
+            flatten_cls_preds: (batch_size, num_predictions, num_cls)
+            flatten_bbox_preds: (batch_size, num_predictions, 4)
+            flatten_objectness: (batch_size, num_predictions)
+            flatten_priors: for decode the bbox_preds to real bboxes
             batch_img_metas (list[dict], Optional): Batch image meta info.
                 Defaults to None.
             cfg (ConfigDict, optional): Test / postprocessing
@@ -380,52 +385,31 @@ class YOLOX_test1_l_Head(BaseDenseHead):
             - bboxes (Tensor): Has a shape (num_instances, 4),
               the last dimension 4 arrange as (x1, y1, x2, y2).
         """
-        assert len(cls_scores) == len(bbox_preds) == len(objectnesses)
         cfg = self.test_cfg if cfg is None else cfg
 
-        num_imgs = len(batch_img_metas)
-        featmap_sizes = [cls_score.shape[2:] for cls_score in cls_scores]
-        mlvl_priors = self.prior_generator.grid_priors(
-            featmap_sizes,
-            dtype=cls_scores[0].dtype,
-            device=cls_scores[0].device,
-            with_stride=True)
-
-        # flatten cls_scores, bbox_preds and objectness
-        flatten_cls_scores = [
-            cls_score.permute(0, 2, 3, 1).reshape(num_imgs, -1,
-                                                  self.cls_out_channels)
-            for cls_score in cls_scores
-        ]
-        flatten_bbox_preds = [
-            bbox_pred.permute(0, 2, 3, 1).reshape(num_imgs, -1, 4)
-            for bbox_pred in bbox_preds
-        ]
-        flatten_objectness = [
-            objectness.permute(0, 2, 3, 1).reshape(num_imgs, -1)
-            for objectness in objectnesses
-        ]
-
-        flatten_cls_scores = torch.cat(flatten_cls_scores, dim=1).sigmoid()
-        flatten_bbox_preds = torch.cat(flatten_bbox_preds, dim=1)
-        flatten_objectness = torch.cat(flatten_objectness, dim=1).sigmoid()
-        flatten_priors = torch.cat(mlvl_priors)
+        flatten_cls_preds = flatten_cls_preds.sigmoid()
+        flatten_objectness = flatten_objectness.sigmoid()
 
         flatten_bboxes = self._bbox_decode(flatten_priors, flatten_bbox_preds)
 
         result_list = []
-        for img_id in range(num_imgs):
-            max_scores, labels = torch.max(flatten_cls_scores[img_id], 1)
+        for img_id, img_meta in enumerate(batch_img_metas):
+            max_scores, labels = torch.max(flatten_cls_preds[img_id], 1)
             valid_mask = flatten_objectness[
-                             img_id] * max_scores >= cfg.score_thr
+                img_id] * max_scores >= cfg.score_thr
             results = InstanceData(
                 bboxes=flatten_bboxes[img_id][valid_mask],
                 scores=max_scores[valid_mask] *
-                       flatten_objectness[img_id][valid_mask],
+                flatten_objectness[img_id][valid_mask],
                 labels=labels[valid_mask])
 
-            # no nms here
-            result_list.append(results)
+            result_list.append(
+                self._bbox_post_process(
+                    results=results,
+                    cfg=cfg,
+                    rescale=rescale,
+                    with_nms=with_nms,
+                    img_meta=img_meta))
 
         return result_list
 
@@ -504,30 +488,28 @@ class YOLOX_test1_l_Head(BaseDenseHead):
 
     def loss_by_feat(self,
                      experts_output_list,
-                     gate_value_and_topk_idx,
+                     moe_mix_info,
                      batch_gt_instances: Sequence[InstanceData],
                      batch_img_metas: Sequence[dict],
                      batch_gt_instances_ignore: OptInstanceList = None) -> dict:
-        gate_value, topk_idx, distribute_idx = gate_value_and_topk_idx
 
-        loss_dict = dict()
-        for i in range(self.num_experts):
-            task_idx = distribute_idx[i]
-            cls_scores, bbox_preds, objectnesses = experts_output_list[i]
-            batch_gt_instances_i = list_slice(task_idx, batch_gt_instances)
-            batch_img_metas_i = list_slice(task_idx, batch_img_metas)
-            batch_gt_instances_ignore_i = list_slice(task_idx, batch_gt_instances_ignore)
-            _loss_dict = self._loss_by_feat(cls_scores,
-                                            bbox_preds,
-                                            objectnesses,
-                                            batch_gt_instances_i,
-                                            batch_img_metas_i,
-                                            batch_gt_instances_ignore_i)
-            loss_dict = dict_sum_up(loss_dict, _loss_dict)
+        gate_value, topk_idx, distributes, no_use_in_train = moe_mix_info
+
+        flatten_cls_preds, flatten_bbox_preds, flatten_objectness, flatten_priors = experts_output_list
+
+        loss_dict = self._loss_by_feat(flatten_cls_preds,
+                                       flatten_bbox_preds,
+                                       flatten_objectness,
+                                       flatten_priors,
+                                       batch_gt_instances,
+                                       batch_img_metas,
+                                       batch_gt_instances_ignore)
+
         loss_dict['loss_gate'] = self.loss_gate(gate_value)
+
         return loss_dict
 
-    def gate_value_to_topk(self, gate_value):
+    def get_topk_and_distribute(self, gate_value):
         """how to use the gate value, can be implemented with various method
             e.g. noise top-k
             current is the easiest implement
@@ -536,32 +518,53 @@ class YOLOX_test1_l_Head(BaseDenseHead):
             return:
                 fin_gate_value: for load balance loss
                 topk_idx: for distribution to each experts
+                distributes: refer to the return of function "self.distribute_to_experts_with_weight"
+                no_use_in_train: refer to the return of function "self.distribute_to_experts_with_weight"
         """
         top_logists, topk_idx = gate_value.topk(self.num_selects, dim=1)
         top_gate_value = self.softmax(top_logists)
+
+        distributes, no_use_in_train = self.distribute_to_experts_with_weight(top_gate_value, topk_idx)
 
         """set the rest to zero, while keep the gate value shape"""
         fin_gate_value = torch.zeros_like(gate_value, requires_grad=True).type_as(top_gate_value)
         fin_gate_value = fin_gate_value.scatter(1, topk_idx, top_gate_value)
 
-        return fin_gate_value, topk_idx
+        return fin_gate_value, topk_idx, distributes, no_use_in_train
 
-    def distribute_to_experts(self, topk_idx):
-        """distribute task within a batch to different experts
-            input topk_idx: shape (batch_size, num_selects）
+    def distribute_to_experts_with_weight(self, top_softmax, topk_idx):
+        """distribute task within a batch to different experts, with its correspond logist value
+            input:
+                top_softmax: shape (batch_size, num_selects) should be the logist value after the softmax
+                topk_idx: shape (batch_size, num_selects)
+            return:
+                output: List[ [distribute_idx, correspond_logists], [ ... ], ... ]
+                    hint: output[i][0] is the choice for i^th expert load
+                          output[i][1] is the corresponding logists for i^th expert
+                no_use_in_train: List[ [expert_id, batch_id] ]
         """
+        batch_size = topk_idx.size(0)
         output = [None] * self.num_experts
+        no_use_in_train = list()
         for expert_id in range(self.num_experts):
-            data_indices = (topk_idx == expert_id).nonzero(as_tuple=True)[0]
+            mask = topk_idx == expert_id
+            data_indices = mask.nonzero(as_tuple=True)[0]
             if data_indices.numel() > 0:
-                output[expert_id] = data_indices
-        return output
+                output[expert_id] = [data_indices, top_softmax[mask]]
+            else:
+                # add random pick at here during the training for synthesis gradient during training in multi-GPU
+                if self.training:
+                    data_indices = torch.randint(0, batch_size, (1,), device=topk_idx.device)
+                    output[expert_id] = [data_indices, torch.zeros((1,), device=topk_idx.device)]
+                    no_use_in_train.append(expert_id)
+        return output, no_use_in_train
 
     def _loss_by_feat(
             self,
-            cls_scores: Sequence[Tensor],
-            bbox_preds: Sequence[Tensor],
-            objectnesses: Sequence[Tensor],
+            flatten_cls_preds,
+            flatten_bbox_preds,
+            flatten_objectness,
+            flatten_priors,
             batch_gt_instances: Sequence[InstanceData],
             batch_img_metas: Sequence[dict],
             batch_gt_instances_ignore: OptInstanceList = None):
@@ -572,15 +575,10 @@ class YOLOX_test1_l_Head(BaseDenseHead):
         head.
 
         Args:
-            cls_scores (Sequence[Tensor]): Box scores for each scale level,
-                each is a 4D-tensor, the channel number is
-                num_priors * num_classes.
-            bbox_preds (Sequence[Tensor]): Box energies / deltas for each scale
-                level, each is a 4D-tensor, the channel number is
-                num_priors * 4.
-            objectnesses (Sequence[Tensor]): Score factor for
-                all scale level, each is a 4D-tensor, has shape
-                (batch_size, 1, H, W).
+            flatten_cls_preds: (batch_size, num_predictions, num_cls)
+            flatten_bbox_preds: (batch_size, num_predictions, 4)
+            flatten_objectness: (batch_size, num_predictions)
+            flatten_priors: for decode the bbox_preds to real bboxes
             batch_gt_instances (list[:obj:`InstanceData`]): Batch of
                 gt_instance. It usually includes ``bboxes`` and ``labels``
                 attributes.
@@ -598,31 +596,6 @@ class YOLOX_test1_l_Head(BaseDenseHead):
         if batch_gt_instances_ignore is None:
             batch_gt_instances_ignore = [None] * num_imgs
 
-        featmap_sizes = [cls_score.shape[2:] for cls_score in cls_scores]
-        mlvl_priors = self.prior_generator.grid_priors(
-            featmap_sizes,
-            dtype=cls_scores[0].dtype,
-            device=cls_scores[0].device,
-            with_stride=True)
-
-        flatten_cls_preds = [
-            cls_pred.permute(0, 2, 3, 1).reshape(num_imgs, -1,
-                                                 self.cls_out_channels)
-            for cls_pred in cls_scores
-        ]
-        flatten_bbox_preds = [
-            bbox_pred.permute(0, 2, 3, 1).reshape(num_imgs, -1, 4)
-            for bbox_pred in bbox_preds
-        ]
-        flatten_objectness = [
-            objectness.permute(0, 2, 3, 1).reshape(num_imgs, -1)
-            for objectness in objectnesses
-        ]
-
-        flatten_cls_preds = torch.cat(flatten_cls_preds, dim=1)
-        flatten_bbox_preds = torch.cat(flatten_bbox_preds, dim=1)
-        flatten_objectness = torch.cat(flatten_objectness, dim=1)
-        flatten_priors = torch.cat(mlvl_priors)
         flatten_bboxes = self._bbox_decode(flatten_priors, flatten_bbox_preds)
 
         (pos_masks, cls_targets, obj_targets, bbox_targets, l1_targets,
@@ -644,18 +617,13 @@ class YOLOX_test1_l_Head(BaseDenseHead):
         pos_masks = torch.cat(pos_masks, 0)        # list( (8400) )
         cls_targets = torch.cat(cls_targets, 0)    # list( (pos_num, 20) )
         obj_targets = torch.cat(obj_targets, 0)    # list( (8400, 1) )
-        # obj_targets = torch.cat([obj_target.permute(1, 0) for obj_target in obj_targets], 0)
         bbox_targets = torch.cat(bbox_targets, 0)  # list( (pos_num, 4))
 
         if self.use_l1:
             l1_targets = torch.cat(l1_targets, 0)  # list( (pos_num, 4))
 
-        # loss_obj = torch.sum(self.loss_obj(flatten_objectness, obj_targets, reduction_override='none'), dim=1)
-        # loss_obj_label = loss_obj.detach()  # for gate output label
-        # loss_obj = torch.sum(loss_obj) / num_total_samples
-
         loss_obj = self.loss_obj(flatten_objectness.view(-1, 1),
-                                 obj_targets) / num_total_samples
+                                 obj_targets, reduction_override='none') / num_total_samples
 
         if num_pos > 0:
             loss_cls = self.loss_cls(
