@@ -926,7 +926,7 @@ class SIoULoss(nn.Module):
         return loss
 
 @weighted_loss
-def dfiou_loss(box1, box2, eps=1e-7, ratio=0.9):
+def dfiou_loss(box1, box2, eps=1e-7, ratio=0.9, mode='linear'):
     b1_x1, b1_y1, b1_x2, b1_y2 = box1.chunk(4, -1)
     b2_x1, b2_y1, b2_x2, b2_y2 = box2.chunk(4, -1)
     w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
@@ -952,7 +952,14 @@ def dfiou_loss(box1, box2, eps=1e-7, ratio=0.9):
     s_union_mp = torch.prod(mid_wh, dim=-1) + torch.prod(target_wh, dim=-1) - s_inter_mp
     miou = (s_inter_mp/s_union_mp).unsqueeze(1)
 
-    loss = 1 - miou + 1 - iou
+    if mode == 'linear':
+        ori_loss = 1 - iou
+    elif mode == 'square':
+        ori_loss = 1 - iou**2
+    else:
+        raise NotImplementedError('please indicate the \'mode\' in DFIoULoss')
+
+    loss = 1 - miou + ori_loss
     return loss
 
 @MODELS.register_module()
@@ -970,12 +977,14 @@ class DFIoULoss(nn.Module):
                  eps: float = 1e-6,
                  reduction: str = 'mean',
                  loss_weight: float = 1.0,
-                 target_ratio: float = 0.9) -> None:
+                 target_ratio: float = 0.9,
+                 mode='linear') -> None:
         super().__init__()
         self.eps = eps
         self.reduction = reduction
         self.loss_weight = loss_weight
         self.target_ratio = target_ratio
+        self.mode = mode
 
     def forward(self,
                 pred: Tensor,
@@ -1021,6 +1030,7 @@ class DFIoULoss(nn.Module):
             weight,
             eps=self.eps,
             ratio=self.target_ratio,
+            mode=self.mode,
             reduction=reduction,
             avg_factor=avg_factor,
             **kwargs)
