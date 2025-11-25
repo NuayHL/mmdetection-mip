@@ -1,6 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from .base_boxes import BaseBoxes
-from .bbox_overlaps import bbox_overlaps
+from .bbox_overlaps import bbox_overlaps, bbox_overlaps_ext
 from .box_type import (autocast_box_type, convert_box_type, get_box_type,
                        register_box, register_box_converter)
 from .horizontal_boxes import HorizontalBoxes

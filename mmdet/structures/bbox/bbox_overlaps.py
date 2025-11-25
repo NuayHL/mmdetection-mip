@@ -127,7 +127,7 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
         >>> assert tuple(bbox_overlaps(empty, empty).shape) == (0, 0)
     """
 
-    assert mode in ['iou', 'iof', 'giou'], f'Unsupported mode {mode}'
+    assert mode in ['iou', 'iof', 'giou', 'sim'], f'Unsupported mode {mode}'
     # Either the boxes are empty or the length of boxes' last dimension is 4
     assert (bboxes1.size(-1) == 4 or bboxes1.size(0) == 0)
     assert (bboxes2.size(-1) == 4 or bboxes2.size(0) == 0)
@@ -147,6 +147,32 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
             return bboxes1.new(batch_shape + (rows, ))
         else:
             return bboxes1.new(batch_shape + (rows, cols))
+
+    if mode == 'sim':
+        x1 = (bboxes1[..., :, None, 0] + bboxes1[..., :, None, 2]) / 2 + eps
+        y1 = (bboxes1[..., :, None, 1] + bboxes1[..., :, None, 3]) / 2 + eps
+        x2 = (bboxes2[..., None, :, 0] + bboxes2[..., None, :, 2]) / 2 + eps
+        y2 = (bboxes2[..., None, :, 1] + bboxes2[..., None, :, 3]) / 2 + eps
+
+        w1 = bboxes1[..., :, None, 2] - bboxes1[..., :, None, 0] + eps
+        h1 = bboxes1[..., :, None, 3] - bboxes1[..., :, None, 1] + eps
+        w2 = bboxes2[..., None, :, 2] - bboxes2[..., None, :, 0] + eps
+        h2 = bboxes2[..., None, :, 3] - bboxes2[..., None, :, 1] + eps
+
+        x = 6.13
+        y = 4.59
+
+        sim_loc = torch.sqrt(((x1 - x2) / ((w1 + w2) / x)) ** 2 +
+                             ((y1 - y2) / ((h1 + h2) / y)) ** 2)
+        sim_shape = torch.sqrt(((w1 - w2) / ((w1 + w2) / x)) ** 2 +
+                               ((h1 - h2) / ((h1 + h2) / y)) ** 2)
+
+        overlaps = torch.exp(-(1 * sim_loc + 1 * sim_shape))
+
+        eps = overlaps.new_tensor([eps])
+        overlaps = torch.max(overlaps, eps)
+
+        return overlaps
 
     area1 = (bboxes1[..., 2] - bboxes1[..., 0]) * (
         bboxes1[..., 3] - bboxes1[..., 1])
@@ -197,3 +223,197 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
     enclose_area = torch.max(enclose_area, eps)
     gious = ious - (enclose_area - union) / enclose_area
     return gious
+
+def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, **kwargs):
+    """
+    Calculate overlap between two set of bboxes.
+    Now supports: 'iou', 'iof', 'giou', 'diou', 'interpiou', 'd_interpiou'.
+
+    Args:
+        bboxes1 (Tensor): shape (B, m, 4) in <x1, y1, x2, y2> format or empty.
+        bboxes2 (Tensor): shape (B, n, 4) in <x1, y1, x2, y2> format or empty.
+        mode (str): "iou", "iof", "giou", "diou", "interpiou", "d_interpiou".
+        is_aligned (bool, optional): If True, then m and n must be equal.
+        eps (float, optional): A value added to the denominator for numerical stability.
+        **kwargs: specific parameters for InterpIoU (e.g., 'interp_coe', 'lv', 'hv').
+
+    Returns:
+        Tensor: shape (m, n) if ``is_aligned`` is False else shape (m,)
+    """
+
+    assert mode in ['iou', 'iof', 'giou', 'diou', 'interpiou', 'd_interpiou'], f'Unsupported mode {mode}'
+    # Either the boxes are empty or the length of boxes' last dimension is 4
+    assert (bboxes1.size(-1) == 4 or bboxes1.size(0) == 0)
+    assert (bboxes2.size(-1) == 4 or bboxes2.size(0) == 0)
+
+    # Batch dim must be the same
+    assert bboxes1.shape[:-2] == bboxes2.shape[:-2]
+    batch_shape = bboxes1.shape[:-2]
+
+    rows = bboxes1.size(-2)
+    cols = bboxes2.size(-2)
+    if is_aligned:
+        assert rows == cols
+
+    if rows * cols == 0:
+        if is_aligned:
+            return bboxes1.new(batch_shape + (rows,))
+        else:
+            return bboxes1.new(batch_shape + (rows, cols))
+
+    area1 = (bboxes1[..., 2] - bboxes1[..., 0]) * (
+            bboxes1[..., 3] - bboxes1[..., 1])
+    area2 = (bboxes2[..., 2] - bboxes2[..., 0]) * (
+            bboxes2[..., 3] - bboxes2[..., 1])
+
+    if is_aligned:
+        lt = torch.max(bboxes1[..., :2], bboxes2[..., :2])  # [B, rows, 2]
+        rb = torch.min(bboxes1[..., 2:], bboxes2[..., 2:])  # [B, rows, 2]
+
+        wh = fp16_clamp(rb - lt, min=0)
+        overlap = wh[..., 0] * wh[..., 1]
+
+        if mode in ['iou', 'giou', 'diou', 'interpiou', 'd_interpiou']:
+            union = area1 + area2 - overlap
+        else:
+            union = area1
+
+        # Pre-calculate enclosed box for GIoU and DIoU
+        if mode in ['giou', 'diou']:
+            enclosed_lt = torch.min(bboxes1[..., :2], bboxes2[..., :2])
+            enclosed_rb = torch.max(bboxes1[..., 2:], bboxes2[..., 2:])
+
+    else:
+        # Broadcasting for unaligned calculation
+        lt = torch.max(bboxes1[..., :, None, :2],
+                       bboxes2[..., None, :, :2])  # [B, rows, cols, 2]
+        rb = torch.min(bboxes1[..., :, None, 2:],
+                       bboxes2[..., None, :, 2:])  # [B, rows, cols, 2]
+
+        wh = fp16_clamp(rb - lt, min=0)
+        overlap = wh[..., 0] * wh[..., 1]
+
+        if mode in ['iou', 'giou', 'diou', 'interpiou', 'd_interpiou']:
+            union = area1[..., None] + area2[..., None, :] - overlap
+        else:
+            union = area1[..., None]
+
+        if mode in ['giou', 'diou']:
+            enclosed_lt = torch.min(bboxes1[..., :, None, :2],
+                                    bboxes2[..., None, :, :2])
+            enclosed_rb = torch.max(bboxes1[..., :, None, 2:],
+                                    bboxes2[..., None, :, 2:])
+
+    eps_tensor = union.new_tensor([eps])
+    union = torch.max(union, eps_tensor)
+    ious = overlap / union
+
+    # --- Mode Dispatch ---
+
+    if mode in ['iou', 'iof']:
+        return ious
+
+    # --- GIoU / DIoU Logic ---
+    if mode in ['giou', 'diou']:
+        enclose_wh = fp16_clamp(enclosed_rb - enclosed_lt, min=0)
+
+        if mode == 'giou':
+            enclose_area = enclose_wh[..., 0] * enclose_wh[..., 1]
+            enclose_area = torch.max(enclose_area, eps_tensor)
+            gious = ious - (enclose_area - union) / enclose_area
+            return gious
+
+        if mode == 'diou':
+            cw2 = enclose_wh[..., 0].pow(2) + enclose_wh[..., 1].pow(2) + eps
+
+            # Calculate center distance squared (rho2)
+            if is_aligned:
+                c1 = (bboxes1[..., :2] + bboxes1[..., 2:]) / 2
+                c2 = (bboxes2[..., :2] + bboxes2[..., 2:]) / 2
+                rho2 = ((c2 - c1) ** 2).sum(dim=-1)
+            else:
+                c1 = (bboxes1[..., :, None, :2] + bboxes1[..., :, None, 2:]) / 2
+                c2 = (bboxes2[..., None, :, :2] + bboxes2[..., None, :, 2:]) / 2
+                rho2 = ((c2 - c1) ** 2).sum(dim=-1)
+
+            dious = ious - rho2 / cw2
+            return dious
+
+    # --- InterpIoU / D_InterpIoU Logic ---
+    if mode in ['interpiou', 'd_interpiou']:
+        # 1. Determine Interpolation Coefficient (coe)
+        interp_coe = kwargs.get("interp_coe", 0.98)
+
+        if mode == 'd_interpiou':
+            # Dynamic coefficient based on current IoU
+            lv, hv = kwargs.get("lv", 0.6), kwargs.get("hv", 0.99)
+            # Make sure to detach iou for coefficient calculation as per paper/logic
+            interp_coe = torch.clamp((1 - ious.detach()), min=lv, max=hv)
+
+        # 2. Calculate Interpolated Box Coordinates (bi)
+        # Formula: bi = (1-coe)*b1 + coe*b2
+        # Note: We must handle broadcasting carefully for unaligned case
+
+        if is_aligned:
+            b1_scaled = (1 - interp_coe).unsqueeze(-1) * bboxes1
+            b2_scaled = interp_coe.unsqueeze(-1) * bboxes2
+            bi = b1_scaled + b2_scaled  # Shape: [B, rows, 4]
+
+            # Target b2 is just bboxes2
+            tgt_b2 = bboxes2
+        else:
+            # Unaligned: Need to broadcast coefficients if they are dynamic (M x N)
+            # or static scalar.
+            # interp_coe shape: Scalar or [B, rows, cols]
+
+            if isinstance(interp_coe, torch.Tensor):
+                coe_exp = interp_coe.unsqueeze(-1)  # [B, rows, cols, 1]
+            else:
+                coe_exp = interp_coe
+
+            # bboxes1: [B, rows, 1, 4]
+            # bboxes2: [B, 1, cols, 4]
+            b1_broad = bboxes1.unsqueeze(-2)
+            b2_broad = bboxes2.unsqueeze(-3)
+
+            bi = (1 - coe_exp) * b1_broad + coe_exp * b2_broad  # Shape: [B, rows, cols, 4]
+
+            # Target b2 needs to be compatible for intersection: [B, 1, cols, 4]
+            # However, since bi is [B, M, N, 4], we need tgt_b2 to be [B, 1, N, 4]
+            # so torch.min/max works against the M dimension naturally or broadcast again?
+            # Actually, to intersect bi(M,N) with b2(N), we need b2 to act as "N" for each "M".
+            # So tgt_b2 should be b2_broad [B, 1, N, 4]
+            tgt_b2 = b2_broad
+
+        # 3. Calculate Intersection of (bi, b2)
+        # bi: [..., 4] (x1, y1, x2, y2)
+        # tgt_b2: [..., 4]
+
+        inter_lt = torch.max(bi[..., :2], tgt_b2[..., :2])
+        inter_rb = torch.min(bi[..., 2:], tgt_b2[..., 2:])
+
+        inter_wh = fp16_clamp(inter_rb - inter_lt, min=0)
+        inter_i = inter_wh[..., 0] * inter_wh[..., 1]  # Area of intersection
+
+        # 4. Calculate Union of (bi, b2)
+        # area_bi = w_bi * h_bi
+        wi = bi[..., 2] - bi[..., 0] + eps
+        hi = bi[..., 3] - bi[..., 1] + eps
+        area_bi = wi * hi
+
+        # area_b2 needs to match shape.
+        # In aligned: area2 is [rows]
+        # In unaligned: area2 is [cols]. Need [1, cols] to broadcast with [rows, cols]
+        if is_aligned:
+            area_tgt = area2
+        else:
+            area_tgt = area2.unsqueeze(-2)  # [B, 1, cols]
+
+        union_i = area_bi + area_tgt - inter_i + eps_tensor
+
+        # 5. Calculate IoU_i and Final Result
+        iou_i = inter_i / union_i
+
+        return ious + iou_i - 1
+
+    return ious

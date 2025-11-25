@@ -20,6 +20,9 @@ from .task_aligned_assigner import TaskAlignedAssigner
 from .topk_hungarian_assigner import TopkHungarianAssigner
 from .uniform_assigner import UniformAssigner
 
+from .sim2d_calculator import BboxSiM2D
+from .max_sim_assigner import MaxSiMAssigner
+
 __all__ = [
     'BaseAssigner', 'BinaryFocalLossCost', 'MaxIoUAssigner',
     'ApproxMaxIoUAssigner', 'AssignResult', 'PointAssigner', 'ATSSAssigner',

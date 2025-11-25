@@ -1,6 +1,6 @@
 # dataset settings
 dataset_type = 'CocoDataset'
-data_root = 'data/coco/'
+data_root = 'data/VisDrone/'
 
 # Example to use different file client
 # Method 1: simply set the data root and let the file I/O module
@@ -35,17 +35,17 @@ test_pipeline = [
                    'scale_factor'))
 ]
 train_dataloader = dict(
-    batch_size=16,
-    num_workers=16,
+    batch_size=2,
+    num_workers=2,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=dict(type='AspectRatioBatchSampler'),
     dataset=dict(
         type=dataset_type,
-        data_root=data_root,
-        ann_file='annotations/instances_train2017.json',
-        data_prefix=dict(img='train2017/'),
-        filter_cfg=dict(filter_empty_gt=True, min_size=32),
+        data_root=data_root + 'VisDrone2019-DET-train/',
+        ann_file='annotations_VisDrone_train.json',
+        data_prefix=dict(img='images/'),
+        filter_cfg=dict(filter_empty_gt=False, min_size=32),
         pipeline=train_pipeline,
         backend_args=backend_args))
 val_dataloader = dict(
@@ -56,9 +56,9 @@ val_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type=dataset_type,
-        data_root=data_root,
-        ann_file='annotations/instances_val2017.json',
-        data_prefix=dict(img='val2017/'),
+        data_root=data_root + 'VisDrone2019-DET-val',
+        ann_file='annotations_VisDrone_val.json',
+        data_prefix=dict(img='images/'),
         test_mode=True,
         pipeline=test_pipeline,
         backend_args=backend_args))
@@ -66,7 +66,7 @@ test_dataloader = val_dataloader
 
 val_evaluator = dict(
     type='CocoMetric',
-    ann_file=data_root + 'annotations/instances_val2017.json',
+    ann_file=data_root + 'annotations_VisDrone_val.json',
     metric='bbox',
     format_only=False,
     backend_args=backend_args)
