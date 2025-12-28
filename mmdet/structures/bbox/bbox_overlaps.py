@@ -241,7 +241,8 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
         Tensor: shape (m, n) if ``is_aligned`` is False else shape (m,)
     """
 
-    assert mode in ['iou', 'iof', 'giou', 'diou', 'interpiou', 'd_interpiou'], f'Unsupported mode {mode}'
+    assert mode in ['iou', 'iof', 'giou', 'diou', 'interpiou',
+                    'd_interpiou', 'hausdorff'], f'Unsupported mode {mode}'
     # Either the boxes are empty or the length of boxes' last dimension is 4
     assert (bboxes1.size(-1) == 4 or bboxes1.size(0) == 0)
     assert (bboxes2.size(-1) == 4 or bboxes2.size(0) == 0)
@@ -260,6 +261,39 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
             return bboxes1.new(batch_shape + (rows,))
         else:
             return bboxes1.new(batch_shape + (rows, cols))
+
+    if mode == 'hausdorff':
+        if is_aligned:
+            b1_x1, b1_y1, b1_x2, b1_y2 = bboxes1[..., 0], bboxes1[..., 1], bboxes1[..., 2], bboxes1[..., 3]
+            b2_x1, b2_y1, b2_x2, b2_y2 = bboxes2[..., 0], bboxes2[..., 1], bboxes2[..., 2], bboxes2[..., 3]
+        else:
+            b1_x1, b1_y1, b1_x2, b1_y2 = bboxes1[..., :, None, 0], bboxes1[..., :, None, 1], bboxes1[..., :, None, 2], bboxes1[..., :, None, 3]
+            b2_x1, b2_y1, b2_x2, b2_y2 = bboxes2[..., None, :, 0], bboxes2[..., None, :, 1], bboxes2[..., None, :, 2], bboxes2[..., None, :, 3]
+
+        w2 = b2_x2 - b2_x1 + eps
+        h2 = b2_y2 - b2_y1 + eps
+        d2 = w2.pow(2) + h2.pow(2)
+
+        d_tl = (b1_x1 - b2_x1).pow(2) + (b1_y1 - b2_y1).pow(2)
+        d_tr = (b1_x2 - b2_x2).pow(2) + (b1_y1 - b2_y1).pow(2)
+        d_br = (b1_x2 - b2_x2).pow(2) + (b1_y2 - b2_y2).pow(2)
+        d_bl = (b1_x1 - b2_x1).pow(2) + (b1_y2 - b2_y2).pow(2)
+
+        d_h_sq = torch.stack([d_tl, d_tr, d_br, d_bl], dim=-1).max(dim=-1)[0]
+
+        h_dis = torch.exp(- kwargs.get('lambda1') * d_h_sq / d2)
+
+        assert 'using_central' in kwargs, 'Please set using_central=True when calculating Hausdorff distance'
+        if kwargs.get('using_central'):
+            L2_dis_sq = (torch.pow(torch.abs(b1_x1 - b2_x1).clamp(min=0), 2) +
+                         torch.pow(torch.abs(b1_y1 - b2_y1).clamp(min=0), 2) +
+                         torch.pow(torch.abs(b1_x2 - b2_x2).clamp(min=0), 2) +
+                         torch.pow(torch.abs(b1_y2 - b2_y2).clamp(min=0), 2))
+            lambda3 = kwargs.get("lambda3")
+            pow_value = kwargs.get("pow_value")
+            base_dist = torch.exp(- lambda3 * torch.sqrt(L2_dis_sq) / (w2 * h2 + eps))
+            return (1 - torch.pow(base_dist, pow_value)) * h_dis + torch.pow(base_dist, pow_value + 1)
+        return h_dis
 
     area1 = (bboxes1[..., 2] - bboxes1[..., 0]) * (
             bboxes1[..., 3] - bboxes1[..., 1])
