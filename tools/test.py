@@ -25,10 +25,20 @@ from mmdet.utils import setup_cache_size_limit_of_dynamo
 def parse_args():
     parser = argparse.ArgumentParser(
         description='MMDet test (and eval) a model')
-    parser.add_argument('config', help='test config file path')
-    parser.add_argument('checkpoint', help='checkpoint file')
+    # parser.add_argument('config', help='test config file path')
+    # parser.add_argument('checkpoint', help='checkpoint file')
+    parser.add_argument('--config',
+                        default='configs_m/faster_rcnn/faster-rcnn_r50_fpn_1x_hts_visdrone.py', help='test config file path')
+    parser.add_argument('--checkpoint',
+                        default='work_dirs/visdrone/faster-rcnn_r50_fpn_1x_hts_visdrone/better_1_95_50_30/epoch_12.pth', help='checkpoint file')
+    # parser.add_argument('--config',
+    #                    default='configs_m/faster_rcnn/faster-rcnn_r50_fpn_m2x_iou_aitodv2.py',
+    #                    help='test config file path')
+    # parser.add_argument('--checkpoint',
+    #                     default='work_dirs/aitodv2/faster-rcnn_r50_fpn_m2x_iou_aitodv2/epoch_24.pth',
+    #                     help='checkpoint file')
     parser.add_argument(
-        '--work-dir',
+        '--work-dir', default='work_dirs_run_results/test',
         help='the directory to save the file containing evaluation metrics')
     parser.add_argument(
         '--out',

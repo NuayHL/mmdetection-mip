@@ -236,6 +236,9 @@ class CocoMetric(BaseMetric):
             scores = result['scores']
             # bbox results
             for i, label in enumerate(labels):
+                # # Skip invalid labels that are out of range
+                # if label < 0 or label >= len(self.cat_ids):
+                #     continue
                 data = dict()
                 data['image_id'] = image_id
                 data['bbox'] = self.xyxy2xywh(bboxes[i])
@@ -250,6 +253,9 @@ class CocoMetric(BaseMetric):
             masks = result['masks']
             mask_scores = result.get('mask_scores', scores)
             for i, label in enumerate(labels):
+                # # Skip invalid labels that are out of range
+                # if label < 0 or label >= len(self.cat_ids):
+                #     continue
                 data = dict()
                 data['image_id'] = image_id
                 data['bbox'] = self.xyxy2xywh(bboxes[i])
@@ -459,6 +465,7 @@ class CocoMetric(BaseMetric):
                     # small/medium/large mask AP results.
                     for x in predictions:
                         x.pop('bbox')
+                predictions = _sanitize_predictions(predictions, logger)
                 coco_dt = self._coco_api.loadRes(predictions)
 
             except IndexError:
@@ -595,3 +602,35 @@ class CocoMetric(BaseMetric):
         if tmp_dir is not None:
             tmp_dir.cleanup()
         return eval_results
+
+def _sanitize_predictions(predictions, logger):
+    valid_preds = []
+    for i, p in enumerate(predictions):
+        bbox = p.get('bbox', None)
+        score = p.get('score', None)
+        cat_id = p.get('category_id', None)
+
+        if bbox is None or score is None or cat_id is None:
+            continue
+
+        x, y, w, h = bbox
+
+        # 基本合法性
+        if not np.isfinite([x, y, w, h, score]).all():
+            logger.warning(f'Drop NaN/Inf bbox: {bbox}')
+            continue
+
+        if w <= 0 or h <= 0:
+            logger.warning(f'Drop invalid bbox (w/h<=0): {bbox}')
+            continue
+
+        if score < 0 or score > 1:
+            logger.warning(f'Drop invalid score: {score}')
+            continue
+
+        valid_preds.append(p)
+
+    if len(valid_preds) == 0:
+        logger.error('All predictions filtered out!')
+
+    return valid_preds

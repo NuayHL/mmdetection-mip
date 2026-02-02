@@ -1,5 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from .aitod_coco_metric import AITODCocoMetric
 from .base_video_metric import BaseVideoMetric
+from .visdrone_coco_metric import VisDroneCocoMetric
 from .cityscapes_metric import CityScapesMetric
 from .coco_caption_metric import COCOCaptionMetric
 from .coco_metric import CocoMetric
@@ -25,11 +27,11 @@ from .voc_metric import VOCMetric
 from .youtube_vis_metric import YouTubeVISMetric
 
 __all__ = [
-    'CityScapesMetric', 'CocoMetric', 'CocoPanopticMetric', 'OpenImagesMetric',
-    'VOCMetric', 'LVISMetric', 'CrowdHumanMetric', 'DumpProposals',
-    'CocoOccludedSeparatedMetric', 'DumpDetResults', 'BaseVideoMetric',
-    'MOTChallengeMetric', 'CocoVideoMetric', 'ReIDMetrics', 'YouTubeVISMetric',
-    'COCOCaptionMetric', 'SemSegMetric', 'RefSegMetric', 'RefExpMetric',
-    'gRefCOCOMetric', 'DODCocoMetric', 'DumpODVGResults', 'Flickr30kMetric',
-    'OVCocoMetric'
+    'AITODCocoMetric', 'VisDroneCocoMetric', 'CityScapesMetric', 'CocoMetric', 
+    'CocoPanopticMetric', 'OpenImagesMetric', 'VOCMetric', 'LVISMetric', 
+    'CrowdHumanMetric', 'DumpProposals', 'CocoOccludedSeparatedMetric', 
+    'DumpDetResults', 'BaseVideoMetric', 'MOTChallengeMetric', 'CocoVideoMetric', 
+    'ReIDMetrics', 'YouTubeVISMetric', 'COCOCaptionMetric', 'SemSegMetric', 
+    'RefSegMetric', 'RefExpMetric', 'gRefCOCOMetric', 'DODCocoMetric', 
+    'DumpODVGResults', 'Flickr30kMetric', 'OVCocoMetric'
 ]

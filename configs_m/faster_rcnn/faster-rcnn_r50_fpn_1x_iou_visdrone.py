@@ -10,6 +10,17 @@ train_batch_size_per_gpu = 2
 train_num_workers = 4  # 推荐使用 train_num_workers = nGPU x 4
 save_epoch_intervals = 1  # 每 interval 轮迭代进行一次保存一次权重
 
+visdrone_classes = ('pedestrian',
+                    'people',
+                    'bicycle',
+                    'car',
+                    'van',
+                    'truck',
+                    'tricycle',
+                    'awning-tricycle',
+                    'bus',
+                    'motor')
+
 # val_json = 'visdrone_val_fix_fixed.json'
 val_json = 'visdrone_test_coco_format.json'
 # val_main_folder = 'VisDrone2019-DET-val/'
@@ -89,7 +100,7 @@ model = dict(
             sampler=dict(
                 type='RandomSampler',
                 num=256,
-                pos_fraction=0.5,
+                pos_fraction=0.3,
                 neg_pos_ub=-1,
                 add_gt_as_proposals=False),
             allowed_border=-1,
@@ -111,7 +122,7 @@ model = dict(
             sampler=dict(
                 type='RandomSampler',
                 num=512,
-                pos_fraction=0.25,
+                pos_fraction=0.3,
                 neg_pos_ub=-1,
                 add_gt_as_proposals=True),
             pos_weight=-1,
@@ -164,13 +175,14 @@ train_dataloader = dict(
         data_root=data_root + 'VisDrone2019-DET-train/',
         ann_file='../visdrone_train_fix_fixed.json',
         data_prefix=dict(img='images/'),
+        metainfo=dict(classes=visdrone_classes),
         filter_cfg=dict(filter_empty_gt=False, min_size=32),
         pipeline=train_pipeline,
         backend_args=backend_args))
 val_dataloader = dict(
     batch_size=train_batch_size_per_gpu,
     num_workers=train_num_workers,
-    persistent_workers=True,
+    persistent_workers=False,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
@@ -178,6 +190,7 @@ val_dataloader = dict(
         data_root=data_root + val_main_folder,
         ann_file=f'../{val_json}',
         data_prefix=dict(img='images/'),
+        metainfo=dict(classes=visdrone_classes),
         test_mode=True,
         pipeline=test_pipeline,
         backend_args=backend_args))
@@ -185,11 +198,13 @@ val_dataloader = dict(
 test_dataloader = val_dataloader
 
 val_evaluator = dict(
+    # type='VisDroneCocoMetric',
     type='CocoMetric',
     ann_file=data_root + val_json,
     metric='bbox',
     format_only=False,
-    backend_args=backend_args)
+    backend_args=backend_args,
+    classwise=True)
 
 test_evaluator = val_evaluator
 
@@ -219,7 +234,7 @@ optim_wrapper = dict(
     type='OptimWrapper',
     optimizer=dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001))
 
-auto_scale_lr = dict(enable=False, base_batch_size=train_batch_size_per_gpu)
+auto_scale_lr = dict(enable=False, base_batch_size=16)
 
 default_hooks = dict(
     # 设置间隔多少个 epoch 保存模型，以及保存模型最多几个，`save_best` 是另外保存最佳模型（推荐）

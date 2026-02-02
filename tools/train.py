@@ -15,12 +15,14 @@ from mmengine.runner import Runner
 
 from mmdet.utils import setup_cache_size_limit_of_dynamo
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
     parser.add_argument('config', help='train config file path')
-    # parser.add_argument('--config', default='configs/yolox/yolox_s_test22_l_mip_113_1xb32-300e_voc.py', help='train config file path')
-    parser.add_argument('--work-dir', help='the dir to save logs and models')
+    # parser.add_argument('--config', default='configs_m/yolox/yolox_l_b16-150e_aitodv2.py', help='train config file path')
+    parser.add_argument('--work-dir', default='workdir/test', help='the dir to save logs and models')
     parser.add_argument(
         '--amp',
         action='store_true',

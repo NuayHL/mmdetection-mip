@@ -53,7 +53,7 @@ class BboxSiM2D:
 
         mode = self.mode if self.mode is not None else mode
 
-        if mode in ['diou', 'd_interpiou', 'interpiou']:
+        if mode in ['diou', 'd_interpiou', 'interpiou', 'hausdorff']:
             bbox_metric = bbox_overlaps_ext
         else:
             bbox_metric = bbox_overlaps

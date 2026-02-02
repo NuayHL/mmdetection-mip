@@ -137,7 +137,8 @@ class MaxSiMAssigner(BaseAssigner):
             if gt_bboxes_ignore is not None:
                 gt_bboxes_ignore = gt_bboxes_ignore.cpu()
 
-        overlaps = self.iou_calculator(gt_bboxes, priors)
+        overlaps = self.iou_calculator(priors, gt_bboxes)
+        overlaps = overlaps.transpose(1, 0)
 
         if (self.ignore_iof_thr > 0 and gt_bboxes_ignore is not None
                 and gt_bboxes_ignore.numel() > 0 and priors.numel() > 0):
