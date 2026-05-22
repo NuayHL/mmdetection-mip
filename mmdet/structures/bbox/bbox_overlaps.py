@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
-
+import torch.nn as nn
+import math
 
 def fp16_clamp(x, min=None, max=None):
     if not x.is_cuda and x.dtype == torch.float16:
@@ -10,7 +11,7 @@ def fp16_clamp(x, min=None, max=None):
     return x.clamp(min, max)
 
 
-def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
+def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, interpiou_ratio=0.98):
     """Calculate overlap between two set of bboxes.
 
     FP16 Contributed by https://github.com/open-mmlab/mmdetection/pull/4889
@@ -99,6 +100,7 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
             Default False.
         eps (float, optional): A value added to the denominator for numerical
             stability. Default 1e-6.
+        interpiou_ratio (float, optional): Ratio for interpiou calculation. Default 0.98.
 
     Returns:
         Tensor: shape (m, n) if ``is_aligned`` is False else shape (m,)
@@ -127,7 +129,7 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
         >>> assert tuple(bbox_overlaps(empty, empty).shape) == (0, 0)
     """
 
-    assert mode in ['iou', 'iof', 'giou', 'sim'], f'Unsupported mode {mode}'
+    assert mode in ['iou', 'iof', 'giou', 'interpiou', 'sim'], f'Unsupported mode {mode}'
     # Either the boxes are empty or the length of boxes' last dimension is 4
     assert (bboxes1.size(-1) == 4 or bboxes1.size(0) == 0)
     assert (bboxes2.size(-1) == 4 or bboxes2.size(0) == 0)
@@ -217,12 +219,73 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
     ious = overlap / union
     if mode in ['iou', 'iof']:
         return ious
+
+    # calculate interpiou
+    if mode == 'interpiou':
+        if is_aligned:
+            mid = bboxes1 * (1 - interpiou_ratio) + bboxes2 * interpiou_ratio
+            lt = torch.max(mid[..., :2], bboxes2[..., :2])
+            rb = torch.min(mid[..., 2:], bboxes2[..., 2:])
+            wh = fp16_clamp(rb - lt, min=0)
+            overlap = wh[..., 0] * wh[..., 1]
+            area_mid = (mid[..., 2] - mid[..., 0]) * (mid[..., 3] - mid[..., 1])
+            area2 = (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+            union = area_mid + area2 - overlap
+            eps = union.new_tensor([eps])
+            union = torch.max(union, eps)
+            interpious = overlap / union
+        else:
+            mid = bboxes1[..., :, None, :] * (1 - interpiou_ratio) + bboxes2[..., None, :, :] * interpiou_ratio
+            lt = torch.max(mid[..., :2], bboxes2[..., None, :, :2])
+            rb = torch.min(mid[..., 2:], bboxes2[..., None, :, 2:])
+            wh = fp16_clamp(rb - lt, min=0)
+            overlap = wh[..., 0] * wh[..., 1]
+            area_mid = (mid[..., 2] - mid[..., 0]) * (mid[..., 3] - mid[..., 1])
+            area2 = (bboxes2[..., 2] - bboxes2[..., 0]) * (bboxes2[..., 3] - bboxes2[..., 1])
+            union = area_mid + area2[..., None, :] - overlap
+            eps = union.new_tensor([eps])
+            union = torch.max(union, eps)
+            interpious = overlap / union
+        return ious + interpious
+
     # calculate gious
     enclose_wh = fp16_clamp(enclosed_rb - enclosed_lt, min=0)
     enclose_area = enclose_wh[..., 0] * enclose_wh[..., 1]
     enclose_area = torch.max(enclose_area, eps)
     gious = ious - (enclose_area - union) / enclose_area
     return gious
+
+def lambda1_function(x, y_min, y_max=16.0):
+    """
+    Implements the shifted Hill function based on user constraints.
+    Formula: f(x) = y_min + (y_max - y_min) * (x^n / (x^n + k^n))
+    """
+    y_max = 16.0
+    k = 16.0  # Semi-saturation point (controls where the curve is at 50% rise)
+    n = 3.0  # Hill coefficient (controls steepness)
+
+    # Calculate the ratio part
+    ratio = torch.pow(x, n) / (torch.pow(x, n) + math.pow(k, n))
+
+    return y_min + (y_max - y_min) * ratio
+
+class SmoothLSEActivation(nn.Module):
+    def __init__(self, slope=0.1, bias=20):
+        super().__init__()
+        self.slope = slope
+        self.bias = bias
+
+    def forward(self, x):
+        """
+        Implements f(x) = SoftMax(x^2, 1.5x + 16)
+        Using logaddexp for numerical stability:
+        log(exp(x^2) + exp(1.5x + 16))
+        """
+        quad_part = x ** 2
+        linear_part = self.slope * x ** 2 + self.bias
+
+        # torch.logaddexp avoids overflow when exponentials are large
+        return torch.logaddexp(quad_part, linear_part)
 
 def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, **kwargs):
     """
@@ -273,6 +336,7 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
         w2 = b2_x2 - b2_x1 + eps
         h2 = b2_y2 - b2_y1 + eps
         d2 = w2.pow(2) + h2.pow(2)
+        s2 = w2 * h2
 
         d_tl = (b1_x1 - b2_x1).pow(2) + (b1_y1 - b2_y1).pow(2)
         d_tr = (b1_x2 - b2_x2).pow(2) + (b1_y1 - b2_y1).pow(2)
@@ -291,7 +355,8 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
                          torch.pow(torch.abs(b1_y2 - b2_y2).clamp(min=0), 2))
             lambda3 = kwargs.get("lambda3")
             pow_value = kwargs.get("pow_value")
-            base_dist = torch.exp(- lambda3 * torch.sqrt(L2_dis_sq) / (w2 * h2 + eps))
+            # area_buffer = SmoothLSEActivation(slope=kwargs.get("slope"), bias=kwargs.get("bias"))
+            base_dist = torch.exp(- lambda3 * torch.sqrt(L2_dis_sq) / s2)
             return (1 - torch.pow(base_dist, pow_value)) * h_dis + torch.pow(base_dist, pow_value + 1)
         return h_dis
 

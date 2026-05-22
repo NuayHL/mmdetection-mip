@@ -121,3 +121,10 @@ work_dirs/
 *.pth
 *.py~
 *.sh~
+
+visualization_interpIoU
+*.jpg
+*.png
+*.mp4
+*.jfif
+

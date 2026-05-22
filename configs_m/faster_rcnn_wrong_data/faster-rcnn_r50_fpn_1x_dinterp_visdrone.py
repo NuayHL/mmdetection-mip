@@ -10,10 +10,10 @@ train_batch_size_per_gpu = 2
 train_num_workers = 4  # 推荐使用 train_num_workers = nGPU x 4
 save_epoch_intervals = 1  # 每 interval 轮迭代进行一次保存一次权重
 
-# val_json = 'visdrone_val_fix_fixed.json'
-val_json = 'visdrone_test_coco_format.json'
-# val_main_folder = 'VisDrone2019-DET-val/'
-val_main_folder = 'VisDrone2019-DET-test-val/'
+val_json = 'visdrone_val_fix_fixed.json'
+# val_json = 'visdrone_test_coco_format.json'
+val_main_folder = 'VisDrone2019-DET-val/'
+# val_main_folder = 'VisDrone2019-DET-test-val/'
 
 # model settings
 model = dict(

@@ -8,7 +8,7 @@ from mmengine.structures import InstanceData
 from torch import Tensor
 
 from mmdet.registry import TASK_UTILS
-from mmdet.structures.bbox import bbox_overlaps, bbox_xyxy_to_cxcywh
+from mmdet.structures.bbox import bbox_overlaps, bbox_overlaps_ext, bbox_xyxy_to_cxcywh
 
 
 class BaseMatchCost:
@@ -173,6 +173,54 @@ class IoUCost(BaseMatchCost):
 
         overlaps = bbox_overlaps(
             pred_bboxes, gt_bboxes, mode=self.iou_mode, is_aligned=False)
+
+        if fp16:
+            overlaps = overlaps.to(torch.float16)
+
+        # The 1 is a constant that doesn't change the matching, so omitted.
+        iou_cost = -overlaps
+        return iou_cost * self.weight
+
+@TASK_UTILS.register_module()
+class HatsCost(BaseMatchCost):
+    def __init__(self, iou_mode: str = 'hausdorff', weight: Union[float, int] = 1.,
+                 iou_kwargs: Optional[dict] = None):
+        super().__init__(weight=weight)
+        self.iou_mode = iou_mode
+        self.iou_kwargs = iou_kwargs
+
+    def __call__(self,
+                 pred_instances: InstanceData,
+                 gt_instances: InstanceData,
+                 img_meta: Optional[dict] = None,
+                 **kwargs):
+        """Compute match cost.
+
+        Args:
+            pred_instances (:obj:`InstanceData`): ``bboxes`` inside is
+                predicted boxes with unnormalized coordinate
+                (x, y, x, y).
+            gt_instances (:obj:`InstanceData`): ``bboxes`` inside is gt
+                bboxes with unnormalized coordinate (x, y, x, y).
+            img_meta (Optional[dict]): Image information. Defaults to None.
+
+        Returns:
+            Tensor: Match Cost matrix of shape (num_preds, num_gts).
+        """
+        pred_bboxes = pred_instances.bboxes
+        gt_bboxes = gt_instances.bboxes
+
+        # avoid fp16 overflow
+        if pred_bboxes.dtype == torch.float16:
+            fp16 = True
+            pred_bboxes = pred_bboxes.to(torch.float32)
+        else:
+            fp16 = False
+
+        overlaps = bbox_overlaps_ext(
+            gt_bboxes, pred_bboxes, mode=self.iou_mode, is_aligned=False, **self.iou_kwargs)
+
+        overlaps = overlaps.transpose(0, 1).contiguous()
 
         if fp16:
             overlaps = overlaps.to(torch.float16)

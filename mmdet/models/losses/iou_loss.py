@@ -370,19 +370,21 @@ def siou_loss(pred, target, eps=1e-7, neg_gamma=False):
     b2_x1, b2_y1 = target[:, 0], target[:, 1]
     b2_x2, b2_y2 = target[:, 2], target[:, 3]
 
-    w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
-    w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1 + eps
+    w1, h1 = b1_x2 - b1_x1 + eps, b1_y2 - b1_y1 + eps
+    w2, h2 = b2_x2 - b2_x1 + eps, b2_y2 - b2_y1 + eps
 
     # angle cost
     s_cw = (b2_x1 + b2_x2 - b1_x1 - b1_x2) * 0.5 + eps
     s_ch = (b2_y1 + b2_y2 - b1_y1 - b1_y2) * 0.5 + eps
 
-    sigma = torch.pow(s_cw**2 + s_ch**2, 0.5)
+    # sigma = torch.pow(s_cw**2 + s_ch**2, 0.5)
+    sigma = torch.sqrt(s_cw ** 2 + s_ch ** 2).clamp(min=eps)
 
     sin_alpha_1 = torch.abs(s_cw) / sigma
     sin_alpha_2 = torch.abs(s_ch) / sigma
     threshold = pow(2, 0.5) / 2
     sin_alpha = torch.where(sin_alpha_1 > threshold, sin_alpha_2, sin_alpha_1)
+    sin_alpha = sin_alpha.clamp(min=0.0, max=1.0)
     angle_cost = torch.cos(torch.asin(sin_alpha) * 2 - math.pi / 2)
 
     # distance cost
@@ -405,6 +407,44 @@ def siou_loss(pred, target, eps=1e-7, neg_gamma=False):
     loss = 1 - sious.clamp(min=-1.0, max=1.0)
     return loss
 
+@weighted_loss
+def piou_loss(pred: Tensor, target: Tensor, eps: float = 1e-7) -> Tensor:
+    r"""
+
+    Args:
+        pred (Tensor): Predicted bboxes of format (x1, y1, x2, y2),
+            shape (n, 4).
+        target (Tensor): Corresponding gt bboxes, shape (n, 4).
+        eps (float): Epsilon to avoid log(0).
+
+    Return:
+        Tensor: Loss tensor.
+    """
+
+    # overlap
+    lt = torch.max(pred[:, :2], target[:, :2])
+    rb = torch.min(pred[:, 2:], target[:, 2:])
+    wh = (rb - lt).clamp(min=0)
+    overlap = wh[:, 0] * wh[:, 1]
+
+    # union
+    ap = (pred[:, 2] - pred[:, 0]) * (pred[:, 3] - pred[:, 1])
+    ag = (target[:, 2] - target[:, 0]) * (target[:, 3] - target[:, 1])
+    union = ap + ag - overlap + eps
+
+    # IoU
+    ious = overlap / union
+
+    # get target wh
+    b2_x1, b2_y1, b2_x2, b2_y2 = target.chunk(4, -1)
+    w2, h2 = (b2_x2 - b2_x1 + eps).squeeze(dim=-1), (b2_y2 - b2_y1 + eps).squeeze(dim=-1)
+
+    # PIoU
+    d = torch.abs(pred - target)
+    dw1, dh1, dw2, dh2 = d[..., 0], d[..., 1], d[..., 2], d[..., 3]
+    P = ((dw1 + dw2) / w2 + (dh1 + dh2) / h2) / 4
+    L_v1 = 1 - ious - torch.exp(-P ** 2) + 1
+    return L_v1
 
 @MODELS.register_module()
 class IoULoss(nn.Module):
@@ -926,40 +966,98 @@ class SIoULoss(nn.Module):
         return loss
 
 @weighted_loss
-def dfiou_loss(box1, box2, eps=1e-7, ratio=0.9, mode='linear'):
-    b1_x1, b1_y1, b1_x2, b1_y2 = box1.chunk(4, -1)
-    b2_x1, b2_y1, b2_x2, b2_y2 = box2.chunk(4, -1)
-    w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
-    w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1 + eps
-    inter = (b1_x2.minimum(b2_x2) - b1_x1.maximum(b2_x1)).clamp(0) * \
-            (b1_y2.minimum(b2_y2) - b1_y1.maximum(b2_y1)).clamp(0)
+def dfiou_loss(pred, target, eps=1e-7, ratio=0.9, mode='linear'):
 
-    # Union Area
-    union = w1 * h1 + w2 * h2 - inter + eps
+    lt = torch.max(pred[:, :2], target[:, :2])
+    rb = torch.min(pred[:, 2:], target[:, 2:])
+    wh = (rb - lt).clamp(min=0)
+    overlap = wh[:, 0] * wh[:, 1]
+
+    # union
+    ap = (pred[:, 2] - pred[:, 0]) * (pred[:, 3] - pred[:, 1])
+    ag = (target[:, 2] - target[:, 0]) * (target[:, 3] - target[:, 1])
+    union = ap + ag - overlap + eps
 
     # IoU
-    iou = inter / union
+    ious = overlap / union
 
-    mid = box1 * (1 - ratio) + box2 * ratio
+    mid = pred * (1 - ratio) + target * ratio
 
-    min_coord_mp = torch.minimum(mid[..., :4], box2[..., :4])
-    max_coord_mp = torch.maximum(mid[..., :4], box2[..., :4])
-    wh_inter_mp = torch.relu(min_coord_mp[..., 2: 4] - max_coord_mp[..., :2])
-    s_inter_mp = torch.prod(wh_inter_mp, dim=-1)
+    ltm = torch.max(mid[:, :2], target[:, :2])
+    rbm = torch.min(mid[:, 2:], target[:, 2:])
+    whm = (rbm - ltm).clamp(min=0)
+    overlapm = whm[:, 0] * whm[:, 1]
 
-    mid_wh = mid[..., 2:4] - mid[..., :2]
-    target_wh = box2[..., 2:4] - box2[..., :2]
-    s_union_mp = torch.prod(mid_wh, dim=-1) + torch.prod(target_wh, dim=-1) - s_inter_mp
-    miou = (s_inter_mp/s_union_mp).unsqueeze(1)
+    # union
+    apm = (mid[:, 2] - mid[:, 0]) * (mid[:, 3] - mid[:, 1])
+    unionm = apm + ag - overlapm + eps
+
+    # IoU
+    mious = overlapm / unionm
+
+
+    # min_coord_mp = torch.minimum(mid[..., :4], target[..., :4])
+    # max_coord_mp = torch.maximum(mid[..., :4], target[..., :4])
+    # wh_inter_mp = torch.relu(min_coord_mp[..., 2: 4] - max_coord_mp[..., :2])
+    # s_inter_mp = torch.prod(wh_inter_mp, dim=-1)
+    #
+    # mid_wh = mid[..., 2:4] - mid[..., :2]
+    # target_wh = box2[..., 2:4] - box2[..., :2]
+    # s_union_mp = torch.prod(mid_wh, dim=-1) + torch.prod(target_wh, dim=-1) - s_inter_mp
+    # miou = (s_inter_mp/s_union_mp).unsqueeze(1)
 
     if mode == 'linear':
-        ori_loss = 1 - iou
+        ori_loss = 1 - ious
     elif mode == 'square':
-        ori_loss = 1 - iou**2
+        ori_loss = 1 - ious**2
     else:
         raise NotImplementedError('please indicate the \'mode\' in DFIoULoss')
 
-    loss = 1 - miou + ori_loss
+    loss = 1 - mious + ori_loss
+    return loss
+
+
+@weighted_loss
+def dfiou_dynamic_loss(pred, target, eps=1e-7, mode='linear'):
+
+    lt = torch.max(pred[:, :2], target[:, :2])
+    rb = torch.min(pred[:, 2:], target[:, 2:])
+    wh = (rb - lt).clamp(min=0)
+    overlap = wh[:, 0] * wh[:, 1]
+
+    # union
+    ap = (pred[:, 2] - pred[:, 0]) * (pred[:, 3] - pred[:, 1])
+    ag = (target[:, 2] - target[:, 0]) * (target[:, 3] - target[:, 1])
+    union = ap + ag - overlap + eps
+
+    # IoU
+    ious = overlap / union
+
+    # ratio = (0.99 * (1.0 - ious)).unsqueeze(dim=1)
+    ratio = (torch.clamp((1 - ious.detach()), min=0.9, max=0.99)).unsqueeze(dim=1)
+
+    mid = pred * (1 - ratio) + target * ratio
+
+    ltm = torch.max(mid[:, :2], target[:, :2])
+    rbm = torch.min(mid[:, 2:], target[:, 2:])
+    whm = (rbm - ltm).clamp(min=0)
+    overlapm = whm[:, 0] * whm[:, 1]
+
+    # union
+    apm = (mid[:, 2] - mid[:, 0]) * (mid[:, 3] - mid[:, 1])
+    unionm = apm + ag - overlapm + eps
+
+    # IoU
+    mious = overlapm / unionm
+
+    if mode == 'linear':
+        ori_loss = 1 - ious
+    elif mode == 'square':
+        ori_loss = 1 - ious**2
+    else:
+        raise NotImplementedError('please indicate the \'mode\' in DFIoULoss')
+
+    loss = 1 - mious + ori_loss
     return loss
 
 @MODELS.register_module()
@@ -977,7 +1075,7 @@ class DFIoULoss(nn.Module):
                  eps: float = 1e-6,
                  reduction: str = 'mean',
                  loss_weight: float = 1.0,
-                 target_ratio: float = 0.9,
+                 target_ratio: float = 0.98,
                  mode='linear') -> None:
         super().__init__()
         self.eps = eps
@@ -1031,6 +1129,146 @@ class DFIoULoss(nn.Module):
             eps=self.eps,
             ratio=self.target_ratio,
             mode=self.mode,
+            reduction=reduction,
+            avg_factor=avg_factor,
+            **kwargs)
+        return loss
+
+@MODELS.register_module()
+class DynamicDFIoULoss(nn.Module):
+    r"""implementation of work https://arxiv.org/abs/2405.14458
+
+    Args:
+        eps (float): Epsilon to avoid log(0).
+        reduction (str): Options are "none", "mean" and "sum".
+        loss_weight (float): Weight of loss.
+        smooth_point (float): hyperparameter, default is 0.1.
+    """
+
+    def __init__(self,
+                 eps: float = 1e-6,
+                 reduction: str = 'mean',
+                 loss_weight: float = 1.0,
+                 mode='linear') -> None:
+        super().__init__()
+        self.eps = eps
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+        self.mode = mode
+
+    def forward(self,
+                pred: Tensor,
+                target: Tensor,
+                weight: Optional[Tensor] = None,
+                avg_factor: Optional[int] = None,
+                reduction_override: Optional[str] = None,
+                **kwargs) -> Tensor:
+        """Forward function.
+
+        Args:
+            pred (Tensor): Predicted bboxes of format (x1, y1, x2, y2),
+                shape (n, 4).
+            target (Tensor): The learning target of the prediction,
+                shape (n, 4).
+            weight (Optional[Tensor], optional): The weight of loss for each
+                prediction. Defaults to None.
+            avg_factor (Optional[int], optional): Average factor that is used
+                to average the loss. Defaults to None.
+            reduction_override (Optional[str], optional): The reduction method
+                used to override the original reduction method of the loss.
+                Defaults to None. Options are "none", "mean" and "sum".
+
+        Returns:
+            Tensor: Loss tensor.
+        """
+        if weight is not None and not torch.any(weight > 0):
+            if pred.dim() == weight.dim() + 1:
+                weight = weight.unsqueeze(1)
+            return (pred * weight).sum()  # 0
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+        if weight is not None and weight.dim() > 1:
+            # TODO: remove this in the future
+            # reduce the weight of shape (n, 4) to (n,) to match the
+            # giou_loss of shape (n,)
+            assert weight.shape == pred.shape
+            weight = weight.mean(-1)
+        loss = self.loss_weight * dfiou_dynamic_loss(
+            pred,
+            target,
+            weight,
+            eps=self.eps,
+            mode=self.mode,
+            reduction=reduction,
+            avg_factor=avg_factor,
+            **kwargs)
+        return loss
+
+@MODELS.register_module()
+class PIoULoss(nn.Module):
+    r"""implementation of work https://arxiv.org/abs/2405.14458
+
+    Args:
+        eps (float): Epsilon to avoid log(0).
+        reduction (str): Options are "none", "mean" and "sum".
+        loss_weight (float): Weight of loss.
+        smooth_point (float): hyperparameter, default is 0.1.
+    """
+
+    def __init__(self,
+                 eps: float = 1e-6,
+                 reduction: str = 'mean',
+                 loss_weight: float = 1.0,
+                 ) -> None:
+        super().__init__()
+        self.eps = eps
+        self.reduction = reduction
+        self.loss_weight = loss_weight
+
+    def forward(self,
+                pred: Tensor,
+                target: Tensor,
+                weight: Optional[Tensor] = None,
+                avg_factor: Optional[int] = None,
+                reduction_override: Optional[str] = None,
+                **kwargs) -> Tensor:
+        """Forward function.
+
+        Args:
+            pred (Tensor): Predicted bboxes of format (x1, y1, x2, y2),
+                shape (n, 4).
+            target (Tensor): The learning target of the prediction,
+                shape (n, 4).
+            weight (Optional[Tensor], optional): The weight of loss for each
+                prediction. Defaults to None.
+            avg_factor (Optional[int], optional): Average factor that is used
+                to average the loss. Defaults to None.
+            reduction_override (Optional[str], optional): The reduction method
+                used to override the original reduction method of the loss.
+                Defaults to None. Options are "none", "mean" and "sum".
+
+        Returns:
+            Tensor: Loss tensor.
+        """
+        if weight is not None and not torch.any(weight > 0):
+            if pred.dim() == weight.dim() + 1:
+                weight = weight.unsqueeze(1)
+            return (pred * weight).sum()  # 0
+        assert reduction_override in (None, 'none', 'mean', 'sum')
+        reduction = (
+            reduction_override if reduction_override else self.reduction)
+        if weight is not None and weight.dim() > 1:
+            # TODO: remove this in the future
+            # reduce the weight of shape (n, 4) to (n,) to match the
+            # giou_loss of shape (n,)
+            assert weight.shape == pred.shape
+            weight = weight.mean(-1)
+        loss = self.loss_weight * piou_loss(
+            pred,
+            target,
+            weight,
+            eps=self.eps,
             reduction=reduction,
             avg_factor=avg_factor,
             **kwargs)

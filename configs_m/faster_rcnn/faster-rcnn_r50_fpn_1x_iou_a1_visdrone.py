@@ -21,10 +21,10 @@ visdrone_classes = ('pedestrian',
                     'bus',
                     'motor')
 
-# val_json = 'visdrone_val_fix_fixed.json'
-val_json = 'visdrone_test_coco_format.json'
-# val_main_folder = 'VisDrone2019-DET-val/'
-val_main_folder = 'VisDrone2019-DET-test-val/'
+val_json = 'visdrone_val_fix_fixed.json'
+# val_json = 'visdrone_test_coco_format.json'
+val_main_folder = 'VisDrone2019-DET-val/'
+# val_main_folder = 'VisDrone2019-DET-test-val/'
 
 # img_norm_cfg = dict(
 #     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)

@@ -152,6 +152,7 @@ class DetLocalVisualizer(Visualizer):
                 else:
                     label_text = classes[
                         label] if classes is not None else f'class {label}'
+                # del it if don't need printing score on prediction
                 if 'scores' in instances:
                     score = round(float(instances.scores[i]) * 100, 1)
                     label_text += f': {score}'

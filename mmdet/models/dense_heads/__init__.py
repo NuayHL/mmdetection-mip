@@ -20,6 +20,7 @@ from .detr_head import DETRHead
 from .dino_head import DINOHead
 from .embedding_rpn_head import EmbeddingRPNHead
 from .fcos_head import FCOSHead
+from .fcos_tal_head import FCOSTALHead
 from .fovea_head import FoveaHead
 from .free_anchor_retina_head import FreeAnchorRetinaHead
 from .fsaf_head import FSAFHead
@@ -66,7 +67,7 @@ from .yolox_test3_l_head import YOLOX_test3_l_Head
 __all__ = [
     'AnchorFreeHead', 'AnchorHead', 'GuidedAnchorHead', 'FeatureAdaption',
     'RPNHead', 'GARPNHead', 'RetinaHead', 'RetinaSepBNHead', 'GARetinaHead',
-    'SSDHead', 'FCOSHead', 'RepPointsHead', 'FoveaHead',
+    'SSDHead', 'FCOSHead', 'FCOSTALHead', 'RepPointsHead', 'FoveaHead',
     'FreeAnchorRetinaHead', 'ATSSHead', 'FSAFHead', 'NASFCOSHead',
     'PISARetinaHead', 'PISASSDHead', 'GFLHead', 'CornerHead', 'YOLACTHead',
     'YOLACTProtonet', 'YOLOV3Head', 'PAAHead', 'SABLRetinaHead',
