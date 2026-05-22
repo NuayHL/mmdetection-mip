@@ -182,6 +182,13 @@ class QualityFocalLoss(nn.Module):
             If True, it means the input has been activated and can be
             treated as probabilities. Else, it should be treated as logits.
             Defaults to False.
+        custom_cls_channels (bool): If True, opts in to BBoxHead's
+            ``custom_cls_channels`` routing so the head emits exactly
+            ``num_classes`` sigmoid channels (no implicit bg). This avoids
+            the "dead bg channel + softmax inference" miscalibration when
+            QFL is used inside a two-stage RoI head. Dense heads (e.g.
+            GFLHead) bypass this routing, so leaving it False there
+            preserves existing behaviour. Defaults to False.
     """
 
     def __init__(self,
@@ -189,7 +196,8 @@ class QualityFocalLoss(nn.Module):
                  beta=2.0,
                  reduction='mean',
                  loss_weight=1.0,
-                 activated=False):
+                 activated=False,
+                 custom_cls_channels=False):
         super(QualityFocalLoss, self).__init__()
         assert use_sigmoid is True, 'Only sigmoid in QFL supported now.'
         self.use_sigmoid = use_sigmoid
@@ -197,6 +205,28 @@ class QualityFocalLoss(nn.Module):
         self.reduction = reduction
         self.loss_weight = loss_weight
         self.activated = activated
+        # Only declare the flag when opted in — BBoxHead reads it via
+        # getattr(loss_cls, 'custom_cls_channels', False).
+        if custom_cls_channels:
+            self.custom_cls_channels = True
+
+    def get_cls_channels(self, num_classes):
+        """Tell BBoxHead to allocate ``num_classes`` cls outputs (no bg).
+
+        Only called when ``custom_cls_channels`` is True.
+        """
+        return num_classes
+
+    def get_activation(self, cls_score):
+        """Sigmoid activation + dummy bg column.
+
+        ``multiclass_nms`` drops the trailing column under the assumption
+        that it represents the background score; pad a zero column so we
+        keep all ``num_classes`` real classes intact.
+        """
+        scores = cls_score.sigmoid()
+        pad = scores.new_zeros(scores.shape[0], 1)
+        return torch.cat([scores, pad], dim=-1)
 
     def forward(self,
                 pred,

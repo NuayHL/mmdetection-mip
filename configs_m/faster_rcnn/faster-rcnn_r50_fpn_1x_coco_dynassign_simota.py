@@ -12,11 +12,19 @@ model = dict(
         type='DynAssignRoIHead',
         # Softmax→drop-bg is the right activation for the default CE head.
         cls_score_activation='softmax',
+        # SimOTA reads priors as (cx, cy, stride_x, stride_y); convert
+        # from RPN XYXY proposals before the assigner sees them.
+        prior_format='point',
         use_iou_soft_target=False,
         # class-agnostic regression so we can decode (N, 4) for the assigner.
         bbox_head=dict(reg_class_agnostic=True),
     ),
     train_cfg=dict(
+        rpn_proposal=dict(
+            nms_pre=1000,
+            max_per_img=1000,
+            nms=dict(type='nms', iou_threshold=0.7),
+            min_bbox_size=0),
         rcnn=dict(
             _delete_=True,
             assigner=dict(

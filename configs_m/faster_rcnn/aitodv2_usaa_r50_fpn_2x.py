@@ -1,9 +1,7 @@
 _base_ = [
-    '../_base_/models/faster-rcnn_r50_fpn.py',
-    '../_base_/datasets/coco_detection.py',
-    '../_base_/schedules/schedule_1x.py',
-    '../_base_/default_runtime.py',
+    './aitodv2_iou_r50_fpn_2x.py',
 ]
+
 
 # Faster R-CNN with prediction-aware assignment AND IoU-aware soft cls
 # target via QualityFocalLoss. The dynamic assigner picks positives based
@@ -16,14 +14,13 @@ model = dict(
         # BCEWithLogits, so it wants raw logits as `scores`.
         cls_score_activation='identity',
         # DynamicSoftLabel reads priors as (cx, cy, stride, stride);
-        # convert from RPN XYXY proposals before the assigner sees them.
+        # convert from RPN XYXY proposals first.
         prior_format='point',
         use_iou_soft_target=True,
         bbox_head=dict(
             reg_class_agnostic=True,
-            # Sigmoid head: opt into QFL's custom_cls_channels so the
-            # head emits num_classes channels (no dead bg channel) and
-            # inference uses sigmoid instead of softmax.
+            # custom_cls_channels=True: bbox_head emits num_classes sigmoid
+            # channels (no dead bg channel) and inference uses sigmoid.
             loss_cls=dict(
                 type='QualityFocalLoss',
                 use_sigmoid=True,
@@ -34,7 +31,8 @@ model = dict(
     ),
     train_cfg=dict(
         # PseudoSampler keeps every RPN proposal as a cls training sample.
-        # Trim the proposal pool to keep the pos:neg ratio sane.
+        # The base config emits 3000 proposals/image; trim to keep the
+        # pos:neg ratio sane during training.
         rpn_proposal=dict(
             nms_pre=1000,
             max_per_img=1000,

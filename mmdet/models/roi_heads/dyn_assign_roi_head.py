@@ -47,6 +47,18 @@ class DynAssignRoIHead(StandardRoIHead):
                 such as ``QualityFocalLoss``.
               - ``'identity'``: pass logits through. Use with assigners that
                 expect raw logits (e.g. ``DynamicSoftLabelAssigner``).
+        prior_format (str): Spatial layout of ``pred_instances.priors`` the
+            assigner expects. One of:
+
+              - ``'xyxy'`` (default): pass RPN proposals as-is. Use with
+                ``MaxIoUAssigner`` / ``TaskAlignedAssigner`` /
+                ``HungarianAssigner`` — they compute centers from
+                ``(x1+x2)/2`` internally.
+              - ``'point'``: convert each proposal to
+                ``(cx, cy, min(w,h), min(w,h))``. Required by
+                ``SimOTAAssigner`` / ``DynamicSoftLabelAssigner``, which
+                read ``priors[:, :2]`` as the center point and
+                ``priors[:, 2]`` as a per-prior stride.
         use_iou_soft_target (bool): If True, the per-positive IoU stored in
             ``AssignResult.max_overlaps`` is forwarded to ``loss_cls`` as a
             soft classification target. Requires ``loss_cls`` to accept a
@@ -56,13 +68,17 @@ class DynAssignRoIHead(StandardRoIHead):
 
     def __init__(self,
                  cls_score_activation: str = 'softmax',
+                 prior_format: str = 'xyxy',
                  use_iou_soft_target: bool = False,
                  **kwargs) -> None:
         super().__init__(**kwargs)
         assert cls_score_activation in ('softmax', 'sigmoid', 'identity'), (
             f"cls_score_activation must be one of 'softmax', 'sigmoid', "
             f"'identity', got {cls_score_activation!r}")
+        assert prior_format in ('xyxy', 'point'), (
+            f"prior_format must be 'xyxy' or 'point', got {prior_format!r}")
         self.cls_score_activation = cls_score_activation
+        self.prior_format = prior_format
         self.use_iou_soft_target = use_iou_soft_target
 
     def _activate_cls_score(self, cls_score: Tensor) -> Tensor:
@@ -81,6 +97,23 @@ class DynAssignRoIHead(StandardRoIHead):
         if scores.shape[-1] == num_classes + 1:
             scores = scores[..., :num_classes]
         return scores
+
+    @staticmethod
+    def _xyxy_to_point_priors(xyxy: Tensor) -> Tensor:
+        """Convert XYXY boxes into ``(cx, cy, stride, stride)`` point-prior
+        format expected by SimOTA / DynamicSoftLabel.
+
+        ``stride`` is set to ``min(w, h)`` so that the assigner's
+        ``center_radius * stride`` zone scales with each proposal's own
+        size — important for tiny-object datasets where proposals vary by
+        an order of magnitude.
+        """
+        cx = (xyxy[:, 0] + xyxy[:, 2]) * 0.5
+        cy = (xyxy[:, 1] + xyxy[:, 3]) * 0.5
+        w = (xyxy[:, 2] - xyxy[:, 0]).clamp(min=1.0)
+        h = (xyxy[:, 3] - xyxy[:, 1]).clamp(min=1.0)
+        stride = torch.minimum(w, h)
+        return torch.stack([cx, cy, stride, stride], dim=-1)
 
     def _decode_for_assignment(self, priors: Tensor, bbox_pred: Tensor,
                                scores: Tensor) -> Tensor:
@@ -147,18 +180,26 @@ class DynAssignRoIHead(StandardRoIHead):
                                                     scores_i)
             decoded_i = get_box_tensor(decoded_i)
 
-            pred_instances = InstanceData()
-            pred_instances.priors = priors_i
-            pred_instances.bboxes = decoded_i
-            pred_instances.scores = scores_i
+            # Assigner-facing pred_instances: priors may be point-format.
+            assign_priors = (self._xyxy_to_point_priors(priors_i)
+                             if self.prior_format == 'point' else priors_i)
+            pred_for_assign = InstanceData()
+            pred_for_assign.priors = assign_priors
+            pred_for_assign.bboxes = decoded_i
+            pred_for_assign.scores = scores_i
 
             assign_result = self.bbox_assigner.assign(
-                pred_instances, batch_gt_instances[i],
+                pred_for_assign, batch_gt_instances[i],
                 batch_gt_instances_ignore[i])
 
+            # Sampler-facing pred_instances must keep XYXY priors so that
+            # downstream bbox2roi / loss receives valid boxes (and any
+            # add_gt_as_proposals concatenation stays well-typed).
+            pred_for_sample = InstanceData()
+            pred_for_sample.priors = priors_i
             sampling_result = self.bbox_sampler.sample(
                 assign_result,
-                pred_instances,
+                pred_for_sample,
                 batch_gt_instances[i],
                 feats=[lvl_feat[i][None] for lvl_feat in x])
             sampling_results.append(sampling_result)
