@@ -1,7 +1,11 @@
-"""Shared base for the AITOD-v2 Faster R-CNN experiments.
+"""Shared base for the AITOD-v2 Faster R-CNN DSL-AreaRefine experiments.
 
-Holds every setting the IoU/MaxIoU baseline and the USAA experiments
-must keep identical for a fair comparison:
+Identical to ``configs_m/aitodv2_faster_rcnn/_base_.py`` — the only
+difference is that experiments in this folder use
+``DynamicSoftLabelAssignerAreaRefine`` instead of the vanilla
+``DynamicSoftLabelAssigner``.
+
+Holds every setting shared across experiments:
   * dataset / annotation paths / pipelines
   * training schedule (24 epochs, SGD, multistep)
   * model: backbone / neck / RPN head / RPN proposal count (3000)
