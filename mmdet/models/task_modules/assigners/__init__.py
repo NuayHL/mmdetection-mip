@@ -6,6 +6,9 @@ from .base_assigner import BaseAssigner
 from .center_region_assigner import CenterRegionAssigner
 from .dynamic_soft_label_assigner import DynamicSoftLabelAssigner
 from .dynamic_soft_label_assigner_area_refine import DynamicSoftLabelAssignerAreaRefine
+from .dynamic_soft_label_assigner_dscale_dyab import (
+    DYAB_REGISTRY, DyabBase, FixedAB, DyabBudgetShift,
+    DyabLinearFusion, DyabCalibrationAware, DynamicSoftLabelAssignerDScaleDYAB)
 from .grid_assigner import GridAssigner
 from .hungarian_assigner import HungarianAssigner
 from .iou2d_calculator import BboxOverlaps2D, BboxOverlaps2D_GLIP
@@ -35,5 +38,8 @@ __all__ = [
     'IoUCost', 'BboxOverlaps2D', 'DynamicSoftLabelAssigner',
     'MultiInstanceAssigner', 'BboxOverlaps2D_GLIP',
     'HatsCost', 'MaxSiMAssigner', 'BboxSiM2D',
-    'DynamicSoftLabelAssignerAreaRefine'
+    'DynamicSoftLabelAssignerAreaRefine',
+    'DynamicSoftLabelAssignerDScaleDYAB', 'DYAB_REGISTRY',
+    'DyabBase', 'FixedAB', 'DyabBudgetShift', 'DyabLinearFusion',
+    'DyabCalibrationAware'
 ]
