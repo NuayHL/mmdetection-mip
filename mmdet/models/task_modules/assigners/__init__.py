@@ -8,7 +8,8 @@ from .dynamic_soft_label_assigner import DynamicSoftLabelAssigner
 from .dynamic_soft_label_assigner_area_refine import DynamicSoftLabelAssignerAreaRefine
 from .dynamic_soft_label_assigner_dscale_dyab import (
     DYAB_REGISTRY, DyabBase, FixedAB, DyabBudgetShift,
-    DyabLinearFusion, DyabCalibrationAware, DynamicSoftLabelAssignerDScaleDYAB)
+    DyabLinearFusion, DyabCalibrationAware, DyabDSL,
+    DynamicSoftLabelAssignerDScaleDYAB)
 from .grid_assigner import GridAssigner
 from .hungarian_assigner import HungarianAssigner
 from .iou2d_calculator import BboxOverlaps2D, BboxOverlaps2D_GLIP
@@ -17,6 +18,7 @@ from .match_cost import (BBoxL1Cost, BinaryFocalLossCost, ClassificationCost,
                          IoUCost,
                          HatsCost)
 from .max_iou_assigner import MaxIoUAssigner
+from .rpn_expand_assigner import RPNExpandAssigner
 from .multi_instance_assigner import MultiInstanceAssigner
 from .point_assigner import PointAssigner
 from .region_assigner import RegionAssigner
@@ -37,9 +39,9 @@ __all__ = [
     'ClassificationCost', 'CrossEntropyLossCost', 'DiceCost', 'FocalLossCost',
     'IoUCost', 'BboxOverlaps2D', 'DynamicSoftLabelAssigner',
     'MultiInstanceAssigner', 'BboxOverlaps2D_GLIP',
-    'HatsCost', 'MaxSiMAssigner', 'BboxSiM2D',
+    'HatsCost', 'MaxSiMAssigner', 'BboxSiM2D', 'RPNExpandAssigner',
     'DynamicSoftLabelAssignerAreaRefine',
     'DynamicSoftLabelAssignerDScaleDYAB', 'DYAB_REGISTRY',
     'DyabBase', 'FixedAB', 'DyabBudgetShift', 'DyabLinearFusion',
-    'DyabCalibrationAware'
+    'DyabCalibrationAware', 'DyabDSL'
 ]

@@ -218,11 +218,62 @@ class DyabCalibrationAware(DyabBase):
         return alpha, beta
 
 
+class DyabDSL(DyabBase):
+    """α/β strategy designed for DSL's additive cost matrix.
+
+    Key insight: in DSL's ``cost = α·cls_cost + β·iou_cost + center``,
+    α and β control the *relative* contribution of each term.  Unlike
+    TAL's multiplicative metric (s^α × u^β), the additive cost requires
+    careful balance to prevent one term from dominating.
+
+    Design:
+        Small objects (ρ→0):  α↑ β↓  — IoU is noisy for small boxes,
+                               trust cls score more for matching.
+        Large objects (ρ→1):  α↓ β↑  — IoU is reliable, use it to
+                               discriminate high-quality candidates.
+
+        α = α₀ + δα·(1-ρ)    small → high cls, large → baseline cls
+        β = β₀ - δβ·(1-ρ)    small → low IoU, large → baseline IoU
+
+    Defaults are conservative (β₀=1.5 instead of 4.0) to avoid IoU term
+    dominating the cost matrix for medium/large objects.
+
+    YAML::
+
+        dyab_type: DyabDSL
+        dyab_kwargs: {alpha_base: 0.8, beta_base: 1.5,
+                      delta_alpha: 0.4, delta_beta: 0.5, r_ref: 64.0}
+    """
+
+    def __init__(self, alpha_base=0.8, beta_base=1.5,
+                 delta_alpha=0.4, delta_beta=0.5, r_ref=64.0):
+        self.alpha_base = alpha_base
+        self.beta_base = beta_base
+        self.delta_alpha = delta_alpha
+        self.delta_beta = delta_beta
+        self.r_ref_sq = r_ref ** 2
+
+    def compute(self, uncertainty, gt_bboxes, num_gt, na, device):
+        if isinstance(gt_bboxes, BaseBoxes):
+            gt_areas = gt_bboxes.areas
+        else:
+            gt_w = (gt_bboxes[:, 2] - gt_bboxes[:, 0]).clamp(min=1.0)
+            gt_h = (gt_bboxes[:, 3] - gt_bboxes[:, 1]).clamp(min=1.0)
+            gt_areas = gt_w * gt_h
+        r_sq = gt_areas
+        rho = r_sq / (r_sq + self.r_ref_sq)
+        c = 1.0 - rho
+        alpha = self.alpha_base + self.delta_alpha * c   # small obj → α↑
+        beta = self.beta_base - self.delta_beta * c      # small obj → β↓
+        return alpha, beta
+
+
 DYAB_REGISTRY = {
     'FixedAB': FixedAB,
     'DyabBudgetShift': DyabBudgetShift,
     'DyabLinearFusion': DyabLinearFusion,
     'DyabCalibrationAware': DyabCalibrationAware,
+    'DyabDSL': DyabDSL,
 }
 
 
@@ -239,12 +290,15 @@ class DynamicSoftLabelAssignerDScaleDYAB(DynamicSoftLabelAssignerAreaRefine):
 
     **expansion**
         The strict in-gt containment is relaxed: prediction centres may lie
-        outside a GT box by up to ``scale_ratio × stride`` pixels::
+        outside a GT box.  The expansion margin is **size-dependent**::
 
-            deltas.min > -(scale_ratio × stride)
+            margin_per_gt = scale_ratio × (1 - ρ_gt) × stride
+            ρ_gt = area / (area + expansion_r_ref²)
 
-        - ``scale_ratio = 0`` → original strict containment
-        - ``scale_ratio = 1.0`` → centre can be up to ``stride`` pixels outside
+        - Large objects (ρ→1): margin→0 — almost strict containment
+        - Small objects (ρ→0): margin→scale_ratio×stride — full expansion
+
+        ``scale_ratio=0`` disables expansion entirely.
 
     **dyab**
         The cost matrix uses dynamic per-(anchor, GT) weights::
@@ -258,20 +312,24 @@ class DynamicSoftLabelAssignerDScaleDYAB(DynamicSoftLabelAssignerAreaRefine):
         iou_calculator (ConfigType): See :class:`DynamicSoftLabelAssigner`.
         r_ref (float): Area-refine reference size.
         calibrate_mode (str): Area-refine calibration mode (``'pow'`` or ``'add_1'``).
-        scale_ratio (float): Candidate expansion ratio.  The expansion margin
-            is ``scale_ratio × stride``.  Defaults to 1.0.
+        scale_ratio (float): Max expansion ratio.  Actual margin per GT is
+            ``scale_ratio × (1-ρ) × stride``.  Defaults to 1.0.
+        expansion_r_ref (float): Reference side length for size-dependent
+            expansion.  GT area = expansion_r_ref² gives ρ=0.5.  Defaults to 32.0.
         dyab_type (str): Key in ``DYAB_REGISTRY``.
         dyab_kwargs (dict): Keyword arguments for the Dyab subclass.
     """
 
     def __init__(self,
-                 soft_center_radius: float = 3.0,
+                 soft_center_radius: float = 2.0,
                  topk: int = 13,
                  iou_weight: float = 3.0,
                  iou_calculator: ConfigType = dict(type='BboxOverlaps2D'),
                  r_ref: float = 32.0,
                  calibrate_mode: str = 'pow',
                  scale_ratio: float = 1.0,
+                 expansion_type: str = 'static',
+                 expansion_r_ref: float = 32.0,
                  dyab_type: str = 'FixedAB',
                  dyab_kwargs: Optional[dict] = None,
                  ) -> None:
@@ -283,6 +341,9 @@ class DynamicSoftLabelAssignerDScaleDYAB(DynamicSoftLabelAssignerAreaRefine):
             r_ref=r_ref,
             calibrate_mode=calibrate_mode)
         self.scale_ratio = scale_ratio
+        self.expansion_r_ref_sq = expansion_r_ref ** 2
+        self.expansion_type = expansion_type
+        assert self.expansion_type in ['static', 'size_dependent'], f'Invalid expansion_type: {self.expansion_type}'
 
         dyab_kwargs = dyab_kwargs or {}
         dyab_cls = DYAB_REGISTRY[dyab_type] if isinstance(dyab_type, str) else dyab_type
@@ -294,13 +355,12 @@ class DynamicSoftLabelAssignerDScaleDYAB(DynamicSoftLabelAssignerAreaRefine):
                                    gt_bboxes: Tensor) -> Tensor:
         """Select anchor centres that are candidates for each GT.
 
-        Expansion: centre may be outside the GT box by up to
-        ``scale_ratio × stride`` pixels::
+        Size-dependent expansion: the expansion margin is
+        ``scale_ratio × (1 - ρ_gt) × stride``, where
+        ``ρ_gt = area / (area + expansion_r_ref²)``.
 
-            margin = scale_ratio × stride
-            deltas.min > -margin
-
-        ``scale_ratio = 0`` recovers the original strict containment.
+        - Large objects (ρ→1): nearly strict containment (margin→0)
+        - Small objects (ρ→0): full expansion (margin→scale_ratio×stride)
 
         Args:
             priors (Tensor): (num_bboxes, ≥3) — ``priors[:, :2]`` centre,
@@ -313,9 +373,6 @@ class DynamicSoftLabelAssignerDScaleDYAB(DynamicSoftLabelAssignerAreaRefine):
         prior_center = priors[:, :2]             # (num_bboxes, 2)
         strides_all = priors[:, 2]               # (num_bboxes,)
 
-        # Unwrap BaseBoxes → Tensor for expansion; rotated boxes fall back
-        # to strict containment (expansion margin doesn't make geometric
-        # sense for rotated geometry).
         if isinstance(gt_bboxes, BaseBoxes):
             if hasattr(gt_bboxes, 'tensor'):
                 gt_bboxes = gt_bboxes.tensor
@@ -329,9 +386,21 @@ class DynamicSoftLabelAssignerDScaleDYAB(DynamicSoftLabelAssignerAreaRefine):
         if self.scale_ratio == 0.0:
             return deltas.min(dim=-1).values > 0
 
-        # expansion: margin = scale_ratio × stride
-        margin = self.scale_ratio * strides_all               # (n,)
-        is_in_gts = deltas.min(dim=-1).values > (-margin[:, None])
+        if self.expansion_type == 'static':
+            # ---- static expansion factor ----
+            per_gt_scale = self.scale_ratio
+        else:
+            # ---- size-dependent expansion factor ----
+            # ρ = area / (area + r_ref²):  small obj → ρ→0,  large obj → ρ→1
+            gt_w = (gt_bboxes[:, 2] - gt_bboxes[:, 0]).clamp(min=1.0)  # (m,)
+            gt_h = (gt_bboxes[:, 3] - gt_bboxes[:, 1]).clamp(min=1.0)  # (m,)
+            gt_area = gt_w * gt_h                                       # (m,)
+            rho = gt_area / (gt_area + self.expansion_r_ref_sq)         # (m,)  ∈ (0,1]
+            per_gt_scale = self.scale_ratio * (1.0 - rho)               # (m,)
+
+        # margin per (anchor, GT): per_gt_scale × stride
+        margin = per_gt_scale[None, :] * strides_all[:, None]      # (n, m)
+        is_in_gts = deltas.min(dim=-1).values > (-margin)
         return is_in_gts
 
     # ── dyab: dynamic cost weighting ──────────────────────────────────────
