@@ -388,7 +388,8 @@ class DynamicSoftLabelAssignerDScaleDYAB(DynamicSoftLabelAssignerAreaRefine):
 
         if self.expansion_type == 'static':
             # ---- static expansion factor ----
-            per_gt_scale = self.scale_ratio
+            per_gt_scale = gt_bboxes.new_full((gt_bboxes.shape[0],),
+                                              self.scale_ratio)
         else:
             # ---- size-dependent expansion factor ----
             # ρ = area / (area + r_ref²):  small obj → ρ→0,  large obj → ρ→1
