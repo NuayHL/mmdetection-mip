@@ -160,6 +160,12 @@ class RPNExpandAssigner(MaxIoUAssigner):
             expand_mask = self._get_expansion_mask(anchors, gt_bboxes)
             overlaps = overlaps * expand_mask.float()
 
+        # Transpose to (num_gts, num_anchors) — the shape expected by
+        # MaxIoUAssigner.assign_wrt_overlaps.
+        # We compute overlaps as (num_anchors, num_gts) above to keep
+        # _get_expansion_mask consistent.
+        overlaps = overlaps.T.contiguous()
+
         # Standard MaxIoU assignment on masked overlaps
         assign_result = self.assign_wrt_overlaps(overlaps, gt_labels)
         return assign_result
