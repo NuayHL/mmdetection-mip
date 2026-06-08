@@ -13,10 +13,17 @@ Intermediate prediction data (with TP/FP labels, original AND resized
 areas) is saved as a pickle file for later cross-experiment comparison
 without re-running inference.
 
-Usage::
+Usage — single model eval::
 
     python eval_aitod.py --checkpoint /path/to/epoch_24.pth
     python eval_aitod.py --checkpoint /path/to/epoch_24.pth --out-dir my_eval
+
+Usage — compare two experiments::
+
+    python eval_aitod.py --load eval_outputs/exp1/calibration_data.pkl \\
+                                  eval_outputs/exp2/calibration_data.pkl \\
+                         --labels "Baseline" "Our Method" \\
+                         --area-key resized --n-bins 10
 """
 
 import argparse
@@ -25,6 +32,7 @@ import os
 import pickle
 import sys
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 
@@ -62,6 +70,37 @@ def _ensure_mpl():
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as _plt
+
+
+# Color palette for multi-model comparison (consistent with ultralytics style)
+COLORS = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b']
+
+# Fixed axis limits for fair comparison across models
+X_LIM_LOG = (1, 10 ** 4)      # resized px² area range (log scale)
+Y_LIM = (-0.02, 1.02)
+
+
+def _apply_pub_style():
+    """Apply publication-quality rcParams consistent with ultralytics style."""
+    _ensure_mpl()
+    _plt.rcParams.update({
+        'font.family': 'serif',
+        'font.size': 13,
+        'axes.labelsize': 14,
+        'axes.titlesize': 14,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'legend.fontsize': 11,
+        'legend.framealpha': 0.6,
+        'legend.edgecolor': '0.5',
+        'figure.dpi': 150,
+        'savefig.dpi': 300,
+        'savefig.bbox': 'tight',
+        'axes.grid': True,
+        'grid.alpha': 0.25,
+        'grid.linestyle': '--',
+        'lines.linewidth': 1.5,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +361,93 @@ def _per_area_calibration(matched_preds: list) -> dict:
             'n_tp': n_tp,
         }
     return result
+
+
+def _compute_calibration_full(matched_preds: list, n_bins: int = 10) -> dict:
+    """Compute calibration dict with ECE and MCE (ultralytics-style).
+
+    Uses **mean confidence per bin** (``avg_conf``) rather than bin centres
+    for ECE/MCE — this is more faithful to the definition.
+
+    Returns
+    -------
+    dict  with keys: bin_edges, bin_centers, precision, avg_conf, count,
+          ece, mce.  ``None`` if no predictions.
+    """
+    preds = matched_preds  # all preds are either TP or FP
+    if not preds:
+        return None
+
+    scores = np.array([r['score'] for r in preds], dtype=np.float64)
+    is_tp = np.array([r['is_tp'] for r in preds], dtype=np.float64)
+
+    bin_edges = np.linspace(0, 1, n_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    precision = np.zeros(n_bins)
+    avg_conf = np.zeros(n_bins)
+    count = np.zeros(n_bins, dtype=int)
+
+    for i in range(n_bins):
+        mask = (scores >= bin_edges[i]) & (scores < bin_edges[i + 1])
+        count[i] = mask.sum()
+        if count[i] > 0:
+            precision[i] = is_tp[mask].mean()
+            avg_conf[i] = scores[mask].mean()
+        else:
+            precision[i] = 0.0
+            avg_conf[i] = bin_centers[i]
+
+    total = len(preds)
+    ece = float(np.sum(count / total * np.abs(precision - avg_conf)))
+    mce = float(np.max(np.abs(precision - avg_conf)))
+
+    return {
+        'bin_edges': bin_edges,
+        'bin_centers': bin_centers,
+        'precision': precision,
+        'avg_conf': avg_conf,
+        'count': count,
+        'ece': ece,
+        'mce': mce,
+    }
+
+
+def _per_area_calibration_full(matched_preds: list, n_bins: int = 10) -> dict:
+    """Per-area-range calibration with **both** ECE and MCE.
+
+    Returns
+    -------
+    dict  area_label → {'ece', 'mce', 'precision', 'n_preds', 'n_tp'}
+    """
+    by_label = defaultdict(list)
+    for r in matched_preds:
+        by_label[r['area_label']].append(r)
+
+    result = {}
+    for label in ['verytiny', 'tiny', 'small', 'medium']:
+        preds = by_label.get(label, [])
+        if len(preds) == 0:
+            result[label] = {
+                'ece': float('nan'), 'mce': float('nan'),
+                'precision': float('nan'), 'n_preds': 0, 'n_tp': 0,
+            }
+            continue
+        cal = _compute_calibration_full(preds, n_bins=n_bins)
+        n_tp = sum(1 for r in preds if r['is_tp'])
+        result[label] = {
+            'ece': cal['ece'] if cal else float('nan'),
+            'mce': cal['mce'] if cal else float('nan'),
+            'precision': n_tp / len(preds) if len(preds) > 0 else float('nan'),
+            'n_preds': len(preds),
+            'n_tp': n_tp,
+        }
+    return result
+
+
+# ---------------------------------------------------------------------------
+#  Single-model calibration & score-area plotting
+# ---------------------------------------------------------------------------
 
 
 def _plot_calibration(matched_preds: list, out_path: str, model_label: str = ''):
@@ -601,6 +727,324 @@ def _plot_score_area(matched_preds: list, out_path: str, model_label: str = ''):
 
 
 # ---------------------------------------------------------------------------
+#  Comparison mode — load saved pickles and overlay
+# ---------------------------------------------------------------------------
+
+def _load_pickle_data(paths, labels=None):
+    """Load one or more ``calibration_data.pkl`` files for comparison.
+
+    Parameters
+    ----------
+    paths : list[str]
+        Paths to ``.pkl`` files saved by ``main()``.
+    labels : list[str] | None
+        Display names (default: derived from ``model_name`` in the pickle).
+
+    Returns
+    -------
+    list[tuple]  ``(matched_predictions, label_str, model_name)``
+    """
+    datasets = []
+    for i, p in enumerate(paths):
+        with open(p, 'rb') as f:
+            obj = pickle.load(f)
+        preds = obj['matched_predictions']
+        name = obj.get('model_name', Path(p).parent.name)
+        if labels and i < len(labels):
+            lbl = labels[i]
+        else:
+            lbl = name
+        datasets.append((preds, lbl, name))
+        print(f"  Loaded {p}  →  {len(preds):,} predictions  label='{lbl}'")
+    return datasets
+
+
+def _plot_compare_score_area(datasets, save_path=None, area_key='resized',
+                             title=None, figsize=(12, 8), show_fp=False):
+    """Overlaid score vs prediction-area scatter for comparing ≥2 models.
+
+    Parameters
+    ----------
+    datasets : list[tuple]
+        ``(matched_predictions, label, model_name)`` from ``_load_pickle_data``.
+    area_key : str
+        ``'resized'`` (model-input px², default) or ``'original'``.
+    show_fp : bool
+        Whether to also plot false positives as faint 'x' markers.
+    """
+    _apply_pub_style()
+
+    area_field = 'area_resized' if area_key == 'resized' else 'area_original'
+    xlabel = ('Prediction Area (resized / model-input px²)' if area_key == 'resized'
+              else 'Prediction Area (original image px²)')
+    if title is None:
+        title = 'Score vs Prediction Area Comparison'
+
+    fig, ax = _plt.subplots(figsize=figsize)
+
+    for i, (data, lbl, name) in enumerate(datasets):
+        color = COLORS[i % len(COLORS)]
+
+        tp_data = [d for d in data if d['is_tp']]
+        fp_data = [d for d in data if not d['is_tp']]
+
+        if tp_data:
+            a = np.array([d[area_field] for d in tp_data])
+            s = np.array([d['score'] for d in tp_data])
+            ax.scatter(a, s, alpha=0.15, s=6, color=color, edgecolors='none',
+                       label=f'{lbl}  TP (n={len(tp_data):,})')
+
+        if show_fp and fp_data:
+            fp_scores = np.array([d['score'] for d in fp_data])
+            fp_areas = np.array([d[area_field] for d in fp_data])
+            ax.scatter(fp_areas, fp_scores, alpha=0.08, s=6, color=color,
+                       marker='x', label=f'{lbl}  FP (n={len(fp_data):,})')
+
+    # Area-range boundary lines (original-space thresholds, labelled)
+    boundaries = [8 ** 2, 16 ** 2, 32 ** 2]
+    b_labels = ['verytiny ↔ tiny', 'tiny ↔ small', 'small ↔ medium']
+    for b, bl in zip(boundaries, b_labels):
+        ax.axvline(x=b, color='gray', linestyle=':', alpha=0.4)
+        ax.text(b * 0.95, 1.01, bl, fontsize=7, color='gray',
+                ha='right', transform=ax.get_xaxis_transform())
+
+    ax.set_xscale('log')
+    ax.set_xlim(*X_LIM_LOG)
+    ax.set_ylim(*Y_LIM)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Confidence Score')
+    ax.set_title(title)
+    ax.legend(markerscale=2, loc='best')
+
+    _plt.tight_layout()
+
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path)
+        print(f'  Compare score-area plot saved → {save_path}')
+
+    _plt.close(fig)
+    return fig
+
+
+def _plot_compare_calibration(datasets, save_path=None, n_bins=10,
+                              title=None, figsize=(15, 6)):
+    """Overlaid calibration curves + grouped gap bars for ≥2 models.
+
+    Left panel:  precision vs confidence with ECE/MCE in legend.
+    Right panel:  grouped gap bars (precision − avg confidence) per bin.
+    """
+    _apply_pub_style()
+
+    cals = []
+    labels = []
+    for data, lbl, name in datasets:
+        cal = _compute_calibration_full(data, n_bins=n_bins)
+        if cal is not None:
+            cals.append(cal)
+            labels.append(lbl)
+
+    if not cals:
+        print('  No calibration data for any dataset.')
+        return None
+
+    n_models = len(cals)
+    fig, axes = _plt.subplots(1, 2, figsize=figsize)
+
+    # ---- Left: overlaid calibration curves ----
+    ax = axes[0]
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect')
+    for i, (cal, lbl) in enumerate(zip(cals, labels)):
+        color = COLORS[i % len(COLORS)]
+        ax.plot(cal['bin_centers'], cal['precision'], '-', color=color,
+                alpha=0.8, linewidth=1.5)
+        sizes = np.maximum(
+            cal['count'] / max(cal['count'].max(), 1) * 100, 25)
+        ax.scatter(cal['bin_centers'], cal['precision'], s=sizes,
+                   color=color, alpha=0.85, edgecolors='k', linewidths=0.5,
+                   zorder=4,
+                   label=f"{lbl}  ECE={cal['ece']:.4f}  MCE={cal['mce']:.4f}")
+
+    ax.set_xlabel('Confidence')
+    ax.set_ylabel('Precision @IoU=0.5')
+    ax.set_title(title or 'Calibration Comparison')
+    ax.legend(loc='upper left')
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+
+    # ---- Right: grouped gap bars ----
+    ax2 = axes[1]
+    bar_width = 0.8 / n_models
+    bin_edges = cals[0]['bin_edges']
+    for i, (cal, lbl) in enumerate(zip(cals, labels)):
+        color = COLORS[i % len(COLORS)]
+        gap = cal['precision'] - cal['avg_conf']
+        x = np.arange(n_bins) + (i - (n_models - 1) / 2) * bar_width
+        ax2.bar(x, gap, width=bar_width, color=color, alpha=0.85,
+                edgecolor='k', linewidth=0.5, label=lbl)
+    ax2.axhline(0, color='k', linewidth=0.8)
+    ax2.set_xlabel('Confidence Bin')
+    ax2.set_ylabel('Precision − Confidence')
+    ax2.set_title('Gap per Bin')
+    ax2.set_xticks(range(n_bins))
+    ax2.set_xticklabels(
+        [f'{bin_edges[j]:.1f}' for j in range(n_bins)], fontsize=9)
+    ax2.legend()
+
+    _plt.tight_layout()
+
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path)
+        print(f'  Compare calibration plot saved → {save_path}')
+
+    _plt.close(fig)
+    return fig
+
+
+def _save_compare_report(datasets, save_path, n_bins=10):
+    """Save text report: overall ECE/MCE + per-size (verytiny/tiny/small/medium)
+    breakdown + per-bin detail for each model.
+
+    The report is also printed to stdout.
+    """
+    lines = []
+    sep = '=' * 78
+    sub = '─' * 78
+
+    lines.append(sep)
+    lines.append('  Calibration Comparison Report')
+    lines.append(sep)
+
+    # ---- Overall summary table ----
+    lines.append('')
+    lines.append(f"  {'Model':>28s}  {'TP':>8s}  {'FP':>8s}  {'ECE':>8s}  {'MCE':>8s}")
+    lines.append(f"  {'─' * 68}")
+
+    all_cals = []
+    for data, lbl, name in datasets:
+        tp = sum(1 for d in data if d['is_tp'])
+        fp = sum(1 for d in data if not d['is_tp'])
+        cal = _compute_calibration_full(data, n_bins=n_bins)
+        all_cals.append((cal, lbl))
+        ece = f"{cal['ece']:.4f}" if cal else 'N/A'
+        mce = f"{cal['mce']:.4f}" if cal else 'N/A'
+        lines.append(f"  {lbl:>28s}  {tp:>8,}  {fp:>8,}  {ece:>8s}  {mce:>8s}")
+
+    # ---- Per-size breakdown per model ----
+    for data, lbl, name in datasets:
+        lines.append('')
+        lines.append(sub)
+        lines.append(f"  Per-size breakdown: {lbl}")
+        lines.append(sub)
+        lines.append(f"  {'Size':>12s}  {'#Preds':>8s}  {'#TP':>8s}  "
+                     f"{'Prec':>8s}  {'ECE':>8s}  {'MCE':>8s}")
+        lines.append(f"  {'─' * 58}")
+
+        per_area = _per_area_calibration_full(data, n_bins=n_bins)
+        for label in ['verytiny', 'tiny', 'small', 'medium']:
+            s = per_area[label]
+            prec_str = (f"{s['precision']:.4f}"
+                        if not np.isnan(s['precision']) else 'N/A')
+            ece_str = (f"{s['ece']:.4f}"
+                       if not np.isnan(s['ece']) else 'N/A')
+            mce_str = (f"{s['mce']:.4f}"
+                       if not np.isnan(s['mce']) else 'N/A')
+            lines.append(f"  {label:>12s}  {s['n_preds']:>8,}  "
+                         f"{s['n_tp']:>8,}  {prec_str:>8s}  "
+                         f"{ece_str:>8s}  {mce_str:>8s}")
+
+        # Global row
+        cal = _compute_calibration_full(data, n_bins=n_bins)
+        if cal:
+            n_all = len(data)
+            n_tp_all = sum(1 for d in data if d['is_tp'])
+            prec_all = n_tp_all / n_all if n_all > 0 else float('nan')
+            prec_str = (f"{prec_all:.4f}"
+                        if not np.isnan(prec_all) else 'N/A')
+            lines.append(f"  {'─' * 58}")
+            lines.append(f"  {'ALL':>12s}  {n_all:>8,}  {n_tp_all:>8,}  "
+                         f"{prec_str:>8s}  {cal['ece']:>8.4f}  "
+                         f"{cal['mce']:>8.4f}")
+
+    # ---- Per-bin detail for each model ----
+    for data, lbl, name in datasets:
+        cal = _compute_calibration_full(data, n_bins=n_bins)
+        if cal is None:
+            continue
+        lines.append('')
+        lines.append(sub)
+        lines.append(f"  Per-bin detail: {lbl}")
+        lines.append(sub)
+        lines.append(f"  {'Bin':>14s}  {'Count':>7s}  {'AvgConf':>8s}  "
+                     f"{'Prec':>8s}  {'Gap':>8s}")
+        lines.append(f"  {'─' * 51}")
+        for i in range(n_bins):
+            if cal['count'][i] > 0:
+                gap = cal['precision'][i] - cal['avg_conf'][i]
+                lines.append(
+                    f"  [{cal['bin_edges'][i]:.1f},"
+                    f"{cal['bin_edges'][i + 1]:.1f})  "
+                    f"{cal['count'][i]:>7d}  {cal['avg_conf'][i]:>8.4f}  "
+                    f"{cal['precision'][i]:>8.4f}  {gap:>+8.4f}")
+
+    lines.append('')
+    lines.append(sep)
+    lines.append('  End of report')
+    lines.append(sep)
+
+    report = '\n'.join(lines)
+
+    # Write to file
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(save_path, 'w', encoding='utf-8') as f:
+        f.write(report)
+
+    # Also print to stdout
+    print('\n' + report)
+    print(f'\n  Report saved → {save_path}')
+
+
+def _run_compare_mode(args):
+    """Entry point for ``--load``: compare multiple experiments."""
+    print(f"\n{'='*60}")
+    print('Compare mode: loading saved pickle files')
+    print(f"{'='*60}")
+
+    datasets = _load_pickle_data(args.load, labels=args.labels)
+
+    # Output directory
+    out_dir = Path(args.save_dir) if args.save_dir else Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    area_labels = {'resized': 'model-input px²', 'original': 'original px²'}
+    area_str = area_labels.get(args.area_key, args.area_key)
+    print(f'\n  Area key         : {args.area_key} ({area_str})')
+    print(f'  Calibration bins : {args.n_bins}')
+    print(f'  Output directory : {out_dir}')
+
+    # ---- Report ----
+    report_path = out_dir / 'comparison_report.txt'
+    _save_compare_report(datasets, str(report_path), n_bins=args.n_bins)
+
+    # ---- Plots ----
+    cal_path = out_dir / 'compare_calibration.png'
+    _plot_compare_calibration(datasets, save_path=str(cal_path),
+                              n_bins=args.n_bins)
+
+    area_path = out_dir / 'compare_score_vs_area.png'
+    _plot_compare_score_area(datasets, save_path=str(area_path),
+                             area_key=args.area_key, show_fp=args.show_fp)
+
+    print(f"\n{'='*60}")
+    print(f'All comparison outputs in: {out_dir}/')
+    print(f'  comparison_report.txt')
+    print(f'  compare_calibration.png')
+    print(f'  compare_score_vs_area.png')
+    print(f"{'='*60}")
+
+
+# ---------------------------------------------------------------------------
 #  Main
 # ---------------------------------------------------------------------------
 
@@ -617,8 +1061,9 @@ def parse_args():
     parser.add_argument(
         '--checkpoint',
         type=str,
-        required=True,
-        help='Path to the .pth checkpoint to evaluate')
+        default=None,
+        help='Path to the .pth checkpoint to evaluate '
+             '(required for eval mode, ignored with --load)')
     parser.add_argument(
         '--out-dir',
         type=str,
@@ -635,6 +1080,31 @@ def parse_args():
         default=0,
         help='Local rank for distributed testing')
 
+    # ---- Compare mode (load saved pickles, skip eval) ----
+    parser.add_argument(
+        '--load', type=str, nargs='+', default=None,
+        help='Load one or more calibration_data.pkl files for comparison '
+             '(skips evaluation entirely)')
+    parser.add_argument(
+        '--labels', type=str, nargs='+', default=None,
+        help='Display names for each loaded pickle (same order as --load). '
+             'Default: derived from model_name in the pickle.')
+    parser.add_argument(
+        '--area-key', type=str, default='resized',
+        choices=['resized', 'original'],
+        help='Which area metric for the x-axis of scatter plots '
+             '(default: resized = model-input px²)')
+    parser.add_argument(
+        '--n-bins', type=int, default=10,
+        help='Number of confidence bins for calibration (default: 10)')
+    parser.add_argument(
+        '--show-fp', action='store_true', default=False,
+        help='Also show false positives on the compare score-area scatter')
+    parser.add_argument(
+        '--save-dir', type=str, default=None,
+        help='Directory for comparison outputs '
+             '(default: --out-dir, or eval_outputs/compare)')
+
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
@@ -643,6 +1113,18 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # ------------------------------------------------------------------
+    # Compare mode: load saved pickles and overlay — no eval needed
+    # ------------------------------------------------------------------
+    if args.load:
+        _run_compare_mode(args)
+        return
+
+    if not args.checkpoint:
+        raise SystemExit(
+            'Error: --checkpoint is required for eval mode '
+            '(or use --load for compare mode).')
 
     # ------------------------------------------------------------------
     # 1. Setup
@@ -663,7 +1145,7 @@ def main():
         type='AITODCocoMetric',
         ann_file=ann_file,
         metric='bbox',
-        proposal_nums=(1, 100, 1500),
+        proposal_nums=(1, 100, 300),
         format_only=False,
         backend_args=None,
         classwise=True,

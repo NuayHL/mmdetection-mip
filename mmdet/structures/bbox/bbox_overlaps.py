@@ -304,7 +304,7 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
         Tensor: shape (m, n) if ``is_aligned`` is False else shape (m,)
     """
 
-    assert mode in ['iou', 'iof', 'giou', 'diou', 'interpiou',
+    assert mode in ['iou', 'iof', 'giou', 'diou', 'ciou', 'interpiou',
                     'd_interpiou', 'hausdorff'], f'Unsupported mode {mode}'
     # Either the boxes are empty or the length of boxes' last dimension is 4
     assert (bboxes1.size(-1) == 4 or bboxes1.size(0) == 0)
@@ -372,13 +372,13 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
         wh = fp16_clamp(rb - lt, min=0)
         overlap = wh[..., 0] * wh[..., 1]
 
-        if mode in ['iou', 'giou', 'diou', 'interpiou', 'd_interpiou']:
+        if mode in ['iou', 'giou', 'diou', 'ciou', 'interpiou', 'd_interpiou']:
             union = area1 + area2 - overlap
         else:
             union = area1
 
-        # Pre-calculate enclosed box for GIoU and DIoU
-        if mode in ['giou', 'diou']:
+        # Pre-calculate enclosed box for GIoU / DIoU / CIoU
+        if mode in ['giou', 'diou', 'ciou']:
             enclosed_lt = torch.min(bboxes1[..., :2], bboxes2[..., :2])
             enclosed_rb = torch.max(bboxes1[..., 2:], bboxes2[..., 2:])
 
@@ -392,12 +392,12 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
         wh = fp16_clamp(rb - lt, min=0)
         overlap = wh[..., 0] * wh[..., 1]
 
-        if mode in ['iou', 'giou', 'diou', 'interpiou', 'd_interpiou']:
+        if mode in ['iou', 'giou', 'diou', 'ciou', 'interpiou', 'd_interpiou']:
             union = area1[..., None] + area2[..., None, :] - overlap
         else:
             union = area1[..., None]
 
-        if mode in ['giou', 'diou']:
+        if mode in ['giou', 'diou', 'ciou']:
             enclosed_lt = torch.min(bboxes1[..., :, None, :2],
                                     bboxes2[..., None, :, :2])
             enclosed_rb = torch.max(bboxes1[..., :, None, 2:],
@@ -412,8 +412,8 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
     if mode in ['iou', 'iof']:
         return ious
 
-    # --- GIoU / DIoU Logic ---
-    if mode in ['giou', 'diou']:
+    # --- GIoU / DIoU / CIoU Logic ---
+    if mode in ['giou', 'diou', 'ciou']:
         enclose_wh = fp16_clamp(enclosed_rb - enclosed_lt, min=0)
 
         if mode == 'giou':
@@ -422,21 +422,39 @@ def bbox_overlaps_ext(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6, 
             gious = ious - (enclose_area - union) / enclose_area
             return gious
 
+        # DIoU / CIoU share the convex-diagonal (cw2) and center-distance
+        # (rho2) penalty terms.
+        cw2 = enclose_wh[..., 0].pow(2) + enclose_wh[..., 1].pow(2) + eps
+
+        # Calculate center distance squared (rho2)
+        if is_aligned:
+            c1 = (bboxes1[..., :2] + bboxes1[..., 2:]) / 2
+            c2 = (bboxes2[..., :2] + bboxes2[..., 2:]) / 2
+            rho2 = ((c2 - c1) ** 2).sum(dim=-1)
+        else:
+            c1 = (bboxes1[..., :, None, :2] + bboxes1[..., :, None, 2:]) / 2
+            c2 = (bboxes2[..., None, :, :2] + bboxes2[..., None, :, 2:]) / 2
+            rho2 = ((c2 - c1) ** 2).sum(dim=-1)
+
         if mode == 'diou':
-            cw2 = enclose_wh[..., 0].pow(2) + enclose_wh[..., 1].pow(2) + eps
+            return ious - rho2 / cw2
 
-            # Calculate center distance squared (rho2)
-            if is_aligned:
-                c1 = (bboxes1[..., :2] + bboxes1[..., 2:]) / 2
-                c2 = (bboxes2[..., :2] + bboxes2[..., 2:]) / 2
-                rho2 = ((c2 - c1) ** 2).sum(dim=-1)
-            else:
-                c1 = (bboxes1[..., :, None, :2] + bboxes1[..., :, None, 2:]) / 2
-                c2 = (bboxes2[..., None, :, :2] + bboxes2[..., None, :, 2:]) / 2
-                rho2 = ((c2 - c1) ** 2).sum(dim=-1)
-
-            dious = ious - rho2 / cw2
-            return dious
+        # --- CIoU: add the aspect-ratio consistency term v ---
+        if is_aligned:
+            w1 = bboxes1[..., 2] - bboxes1[..., 0]
+            h1 = (bboxes1[..., 3] - bboxes1[..., 1]).clamp(min=eps)
+            w2 = bboxes2[..., 2] - bboxes2[..., 0]
+            h2 = (bboxes2[..., 3] - bboxes2[..., 1]).clamp(min=eps)
+        else:
+            w1 = bboxes1[..., :, None, 2] - bboxes1[..., :, None, 0]
+            h1 = (bboxes1[..., :, None, 3] - bboxes1[..., :, None, 1]).clamp(min=eps)
+            w2 = bboxes2[..., None, :, 2] - bboxes2[..., None, :, 0]
+            h2 = (bboxes2[..., None, :, 3] - bboxes2[..., None, :, 1]).clamp(min=eps)
+        v = (4 / math.pi ** 2) * (torch.atan(w2 / h2) -
+                                  torch.atan(w1 / h1)).pow(2)
+        with torch.no_grad():
+            alpha = v / (v - ious + (1 + eps))
+        return ious - (rho2 / cw2 + v * alpha)  # CIoU
 
     # --- InterpIoU / D_InterpIoU Logic ---
     if mode in ['interpiou', 'd_interpiou']:

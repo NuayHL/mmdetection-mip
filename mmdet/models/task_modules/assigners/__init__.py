@@ -24,11 +24,15 @@ from .point_assigner import PointAssigner
 from .region_assigner import RegionAssigner
 from .sim_ota_assigner import SimOTAAssigner
 from .task_aligned_assigner import TaskAlignedAssigner
+from .task_aligned_assigner_dscale_dyab import (DScaleFunctions,
+                                                TaskAlignedAssignerDScaleDYAB)
 from .topk_hungarian_assigner import TopkHungarianAssigner
 from .uniform_assigner import UniformAssigner
 
 from .sim2d_calculator import BboxSiM2D
 from .max_sim_assigner import MaxSiMAssigner
+from .metric_calculator import BboxDistanceMetric
+from .hierarchical_assigner import HieAssigner
 
 __all__ = [
     'BaseAssigner', 'BinaryFocalLossCost', 'MaxIoUAssigner',
@@ -40,8 +44,10 @@ __all__ = [
     'IoUCost', 'BboxOverlaps2D', 'DynamicSoftLabelAssigner',
     'MultiInstanceAssigner', 'BboxOverlaps2D_GLIP',
     'HatsCost', 'MaxSiMAssigner', 'BboxSiM2D', 'RPNExpandAssigner',
+    'BboxDistanceMetric', 'HieAssigner',
     'DynamicSoftLabelAssignerAreaRefine',
     'DynamicSoftLabelAssignerDScaleDYAB', 'DYAB_REGISTRY',
     'DyabBase', 'FixedAB', 'DyabBudgetShift', 'DyabLinearFusion',
-    'DyabCalibrationAware', 'DyabDSL'
+    'DyabCalibrationAware', 'DyabDSL',
+    'TaskAlignedAssignerDScaleDYAB', 'DScaleFunctions'
 ]
