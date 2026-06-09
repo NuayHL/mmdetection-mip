@@ -47,7 +47,7 @@ run_one "rfla_wd"          "configs_m/aitodv2_faster_rcnn_rfla/aitodv2_rfla_wd.p
 # Phase 2 — RFLA + DSL-DYAB (KLD / WD)
 #
 run_one "rfla_kld_dyab"    "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_dsl_dyab.py"
-run_one "rfla_kld_dyab_balanced"    "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_dsl_dyab_balanced.py"
+run_one "rfla_kld_dyab_balanced"    "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_dsl_balanced.py"
 
 run_one "rfla_wd_dyab"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_wd_dsl_dyab.py"
 run_one "rfla_wd_dyab_balanced"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_wd_dsl_balanced.py"
