@@ -7,12 +7,21 @@ from mmdet.structures.bbox import get_box_tensor
 
 @TASK_UTILS.register_module()
 class BboxDistanceMetric:
-    """2D Overlaps Calculator supporting KLD, WD, GIoU and other distance
-    metrics for RFLA (Receptive Field based Label Assignment).
+    """2D Overlaps Calculator supporting KLD, WD, NWD, GIoU and other
+    distance metrics for RFLA (Receptive Field based Label Assignment) and
+    NWD-RKA (Normalized Wasserstein Distance + Ranking-based K Assignment).
 
     Supports modes: 'iou', 'iof', 'giou', 'wd', 'kl', 'center_distance2',
-    'exp_kl', 'kl_10'.
+    'exp_kl', 'kl_10', 'nwd', 'dotd'.
+
+    Args:
+        constant (float): Normalization constant ``C`` used by the 'nwd'
+            and 'dotd' metrics. Default 12.7 (the AI-TOD value from the
+            NWD-RKA paper).
     """
+
+    def __init__(self, constant=12.7):
+        self.constant = constant
 
     def __call__(self, bboxes1, bboxes2, mode='iou', is_aligned=False):
         """Calculate distance/overlap between 2D bboxes.
@@ -37,7 +46,8 @@ class BboxDistanceMetric:
             bboxes2 = bboxes2[..., :4]
         if bboxes1.size(-1) == 5:
             bboxes1 = bboxes1[..., :4]
-        return bbox_overlaps(bboxes1, bboxes2, mode, is_aligned)
+        return bbox_overlaps(
+            bboxes1, bboxes2, mode, is_aligned, constant=self.constant)
 
     def __repr__(self):
         """str: a string describing the module"""
@@ -45,7 +55,8 @@ class BboxDistanceMetric:
         return repr_str
 
 
-def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
+def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6,
+                  constant=12.7, weight=2):
     """Calculate overlap/distance between two sets of bboxes.
 
     Supports modes beyond standard IoU, including KLD (Kullback-Leibler
@@ -65,7 +76,7 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
     """
     assert mode in ['iou', 'iof', 'giou', 'wd', 'kl',
                     'center_distance2', 'exp_kl', 'kl_10',
-                    'box1_box2'], f'Unsupported mode {mode}'
+                    'box1_box2', 'nwd', 'dotd'], f'Unsupported mode {mode}'
     assert (bboxes1.size(-1) == 4 or bboxes1.size(0) == 0)
     assert (bboxes2.size(-1) == 4 or bboxes2.size(0) == 0)
 
@@ -166,3 +177,22 @@ def bbox_overlaps(bboxes1, bboxes2, mode='iou', is_aligned=False, eps=1e-6):
         wasserstein = center_distance + wh_distance
         wd = 1 / (1 + wasserstein)
         return wd
+
+    # Normalized Wasserstein Distance (NWD-RKA paper).
+    # nwd = exp(-sqrt(center_dist + wh_dist) / C)
+    if mode == 'nwd':
+        center_distance = whs[..., 0] * whs[..., 0] + \
+            whs[..., 1] * whs[..., 1] + eps
+        wh_distance = ((w1 - w2) ** 2 + (h1 - h2) ** 2) / (weight ** 2)
+        wassersteins = torch.sqrt(center_distance + wh_distance)
+        normalized_wasserstein = torch.exp(-wassersteins / constant)
+        return normalized_wasserstein
+
+    # DotD: normalized center-point distance.
+    # dotd = exp(-sqrt(center_dist) / C)
+    if mode == 'dotd':
+        center_distance = whs[..., 0] * whs[..., 0] + \
+            whs[..., 1] * whs[..., 1] + eps
+        distance = torch.sqrt(center_distance)
+        dotd = torch.exp(-distance / constant)
+        return dotd

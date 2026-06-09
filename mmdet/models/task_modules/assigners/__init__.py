@@ -33,6 +33,8 @@ from .sim2d_calculator import BboxSiM2D
 from .max_sim_assigner import MaxSiMAssigner
 from .metric_calculator import BboxDistanceMetric
 from .hierarchical_assigner import HieAssigner
+from .ranking_assigner import RankingAssigner
+from .max_soft_iou_assigner import MaxSoftIoUAssigner
 
 __all__ = [
     'BaseAssigner', 'BinaryFocalLossCost', 'MaxIoUAssigner',
@@ -49,5 +51,6 @@ __all__ = [
     'DynamicSoftLabelAssignerDScaleDYAB', 'DYAB_REGISTRY',
     'DyabBase', 'FixedAB', 'DyabBudgetShift', 'DyabLinearFusion',
     'DyabCalibrationAware', 'DyabDSL',
-    'TaskAlignedAssignerDScaleDYAB', 'DScaleFunctions'
+    'TaskAlignedAssignerDScaleDYAB', 'DScaleFunctions', 'RankingAssigner',
+    'MaxSoftIoUAssigner'
 ]

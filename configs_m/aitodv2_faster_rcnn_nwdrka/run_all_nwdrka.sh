@@ -1,14 +1,17 @@
 #!/bin/bash
 
 # ============================================================
-# AITOD-v2  Faster R-CNN  RFLA — full experiment sweep
+# AITOD-v2  Faster R-CNN  NWD-RKA — full experiment sweep
 #
 # Run from repo root:
-#   bash configs_m/aitodv2_faster_rcnn_rfla/run_all_rfla.sh
+#   bash configs_m/aitodv2_faster_rcnn_nwdrka/run_all_nwdrka.sh
+#
+# Phase 1 trains plain NWD-RKA (RankingAssigner + NWD in the RPN).
+# Phase 2 trains NWD-RKA combined with DSL-DYAB (my RCNN method).
 # ============================================================
 set -euo pipefail
 
-EXP_PREFIX="aitodv2_faster_rcnn_rfla"
+EXP_PREFIX="aitodv2_faster_rcnn_nwdrka"
 
 LOG_DIR="terminal_log/terminal_log_${EXP_PREFIX}"
 mkdir -p "$LOG_DIR"
@@ -37,20 +40,20 @@ run_one() {
     echo ""
 }
 
-#
-# Phase 1 — RFLA base (KLD / WD)
-#
-run_one "rfla_kld"         "configs_m/aitodv2_faster_rcnn_rfla/aitodv2_rfla_kld.py"
-run_one "rfla_wd"          "configs_m/aitodv2_faster_rcnn_rfla/aitodv2_rfla_wd.py"
 
 #
-# Phase 2 — RFLA + DSL-DYAB (KLD / WD)
+# Phase 2 — NWD-RKA + DSL-DYAB (my method)
 #
-run_one "rfla_kld_dyab"    "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_dsl_dyab.py"
-run_one "rfla_kld_dyab_balanced"    "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_dsl_dyab_balanced.py"
+# run_one "nwdrka_dyab"      "configs_m/aitodv2_faster_rcnn_nwdrka_dsl/nwdrka_dsl_dyab.py"
 
-run_one "rfla_wd_dyab"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_wd_dsl_dyab.py"
-run_one "rfla_wd_dyab_balanced"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_wd_dsl_balanced.py"
+# #
+# # Phase 1 — NWD-RKA base
+# #
+# run_one "nwdrka"           "configs_m/aitodv2_faster_rcnn_nwdrka/aitodv2_nwdrka.py"
+
+# run_one "nwdrka_softiou"   "configs_m/aitodv2_faster_rcnn_nwdrka_softiou/nwdrka_softiou.py"
+
+run_one "nwdrka_dyab_balanced"      "configs_m/aitodv2_faster_rcnn_nwdrka_dsl/nwdrka_dsl_balanced.py"
 
 #
 # Report
@@ -58,7 +61,7 @@ run_one "rfla_wd_dyab_balanced"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla
 echo "===================="
 echo "SWEEP FINISHED"
 echo "===================="
-echo "Total experiments : 6"
+echo "Total experiments : 3"
 echo "Failed            : ${#FAILED[@]}"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo "Failures:"

@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # ============================================================
-# AITOD-v2  Faster R-CNN  RFLA — full experiment sweep
+# AITOD-v2  RTMDet-s  —  full experiment sweep
 #
 # Run from repo root:
-#   bash configs_m/aitodv2_faster_rcnn_rfla/run_all_rfla.sh
+#   bash configs_m/aitodv2_rtmdet/run_all.sh
 # ============================================================
 set -euo pipefail
 
-EXP_PREFIX="aitodv2_faster_rcnn_rfla"
+EXP_PREFIX="aitodv2_rtmdet"
 
 LOG_DIR="terminal_log/terminal_log_${EXP_PREFIX}"
 mkdir -p "$LOG_DIR"
@@ -38,19 +38,12 @@ run_one() {
 }
 
 #
-# Phase 1 — RFLA base (KLD / WD)
+# Phase 1 — Baseline + our assigner
+#   (run these first; if either fails, tail the log to diagnose
+#    before sinking time into ablations)
 #
-run_one "rfla_kld"         "configs_m/aitodv2_faster_rcnn_rfla/aitodv2_rfla_kld.py"
-run_one "rfla_wd"          "configs_m/aitodv2_faster_rcnn_rfla/aitodv2_rfla_wd.py"
-
-#
-# Phase 2 — RFLA + DSL-DYAB (KLD / WD)
-#
-run_one "rfla_kld_dyab"    "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_dsl_dyab.py"
-run_one "rfla_kld_dyab_balanced"    "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_dsl_dyab_balanced.py"
-
-run_one "rfla_wd_dyab"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_wd_dsl_dyab.py"
-run_one "rfla_wd_dyab_balanced"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla_wd_dsl_balanced.py"
+run_one "baseline_dsl"           "configs_m/aitodv2_rtmdet/rtmdet_s_aitodv2.py"
+run_one "usaa_default"           "configs_m/aitodv2_rtmdet/rtmdet_s_aitodv2_usaa.py"
 
 #
 # Report
@@ -58,7 +51,7 @@ run_one "rfla_wd_dyab_balanced"     "configs_m/aitodv2_faster_rcnn_rfla_dsl/rfla
 echo "===================="
 echo "SWEEP FINISHED"
 echo "===================="
-echo "Total experiments : 6"
+echo "Total experiments : 2"
 echo "Failed            : ${#FAILED[@]}"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo "Failures:"
