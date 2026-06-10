@@ -41,6 +41,7 @@ from .reppoints_head import RepPointsHead
 from .retina_head import RetinaHead
 from .retina_sepbn_head import RetinaSepBNHead
 from .rpn_head import RPNHead
+from .soft_label_rpn_head import SoftLabelRPNHead
 from .rtmdet_head import RTMDetHead, RTMDetSepBNHead
 from .rtmdet_ins_head import RTMDetInsHead, RTMDetInsSepBNHead
 from .sabl_retina_head import SABLRetinaHead
@@ -66,7 +67,8 @@ from .yolox_test3_l_head import YOLOX_test3_l_Head
 
 __all__ = [
     'AnchorFreeHead', 'AnchorHead', 'GuidedAnchorHead', 'FeatureAdaption',
-    'RPNHead', 'GARPNHead', 'RetinaHead', 'RetinaSepBNHead', 'GARetinaHead',
+    'RPNHead', 'SoftLabelRPNHead', 'GARPNHead', 'RetinaHead',
+    'RetinaSepBNHead', 'GARetinaHead',
     'SSDHead', 'FCOSHead', 'FCOSTALHead', 'RepPointsHead', 'FoveaHead',
     'FreeAnchorRetinaHead', 'ATSSHead', 'FSAFHead', 'NASFCOSHead',
     'PISARetinaHead', 'PISASSDHead', 'GFLHead', 'CornerHead', 'YOLACTHead',

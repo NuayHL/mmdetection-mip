@@ -53,7 +53,9 @@ run_one() {
 
 # run_one "nwdrka_softiou"   "configs_m/aitodv2_faster_rcnn_nwdrka_softiou/nwdrka_softiou.py"
 
-run_one "nwdrka_dyab_balanced"      "configs_m/aitodv2_faster_rcnn_nwdrka_dsl/nwdrka_dsl_balanced.py"
+# run_one "nwdrka_dyab_balanced"      "configs_m/aitodv2_faster_rcnn_nwdrka_dsl/nwdrka_dsl_balanced.py"
+
+run_one "nwdrka_softrpn"      "configs_m/aitodv2_faster_rcnn_nwdrka_softrpn/nwdrka_softrpn.py"
 
 #
 # Report
