@@ -1,7 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from .base_roi_head import BaseRoIHead
 from .bbox_heads import (BBoxHead, ConvFCBBoxHead, DIIHead,
-                         DoubleConvFCBBoxHead, SABLHead, SCNetBBoxHead,
+                         DoubleConvFCBBoxHead, IoUAwareShared2FCBBoxHead,
+                         SABLHead, SCNetBBoxHead,
                          Shared2FCBBoxHead, Shared4Conv1FCBBoxHead)
 from .cascade_roi_head import CascadeRoIHead
 from .double_roi_head import DoubleHeadRoIHead
@@ -23,6 +24,7 @@ from .scnet_roi_head import SCNetRoIHead
 from .shared_heads import ResLayer
 from .sparse_roi_head import SparseRoIHead
 from .soft_label_roi_head import SoftLabelRoIHead
+from .iou_aware_roi_head import IoUAwareRoIHead
 from .standard_roi_head import StandardRoIHead
 from .trident_roi_head import TridentRoIHead
 
@@ -38,5 +40,5 @@ __all__ = [
     'TridentRoIHead',
     'SCNetRoIHead', 'SCNetMaskHead', 'SCNetSemanticHead', 'SCNetBBoxHead',
     'FeatureRelayHead', 'GlobalContextHead', 'MultiInstanceRoIHead',
-    'SoftLabelRoIHead'
+    'SoftLabelRoIHead', 'IoUAwareRoIHead', 'IoUAwareShared2FCBBoxHead'
 ]

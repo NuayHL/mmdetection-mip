@@ -4,6 +4,7 @@ from .convfc_bbox_head import (ConvFCBBoxHead, Shared2FCBBoxHead,
                                Shared4Conv1FCBBoxHead)
 from .dii_head import DIIHead
 from .double_bbox_head import DoubleConvFCBBoxHead
+from .iou_aware_bbox_head import IoUAwareShared2FCBBoxHead
 from .multi_instance_bbox_head import MultiInstanceBBoxHead
 from .sabl_head import SABLHead
 from .scnet_bbox_head import SCNetBBoxHead
@@ -11,5 +12,5 @@ from .scnet_bbox_head import SCNetBBoxHead
 __all__ = [
     'BBoxHead', 'ConvFCBBoxHead', 'Shared2FCBBoxHead',
     'Shared4Conv1FCBBoxHead', 'DoubleConvFCBBoxHead', 'SABLHead', 'DIIHead',
-    'SCNetBBoxHead', 'MultiInstanceBBoxHead'
+    'SCNetBBoxHead', 'MultiInstanceBBoxHead', 'IoUAwareShared2FCBBoxHead'
 ]
