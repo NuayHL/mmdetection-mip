@@ -12,9 +12,15 @@ _base_ = ['./dsl_dyab_rcnn_default.py']
 model = dict(
     train_cfg=dict(
         rcnn=[
-            dict(assigner=dict(expansion_type='size_dependent')),
-            dict(assigner=dict(expansion_type='size_dependent')),
-            dict(assigner=dict(expansion_type='size_dependent')),
+            dict(assigner=dict(
+                type='DynamicSoftLabelAssignerDScaleDYAB',
+                expansion_type='size_dependent')),
+            dict(assigner=dict(
+                type='DynamicSoftLabelAssignerDScaleDYAB',
+                expansion_type='size_dependent')),
+            dict(assigner=dict(
+                type='DynamicSoftLabelAssignerDScaleDYAB',
+                expansion_type='size_dependent')),
         ],
     ),
 )
