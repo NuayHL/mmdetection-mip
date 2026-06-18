@@ -28,6 +28,7 @@ model = dict(
         # Override each bbox head: QFL + class-agnostic regression
         bbox_head=[
             dict(
+                type='Shared2FCBBoxHead',
                 reg_class_agnostic=True,
                 loss_cls=dict(
                     type='QualityFocalLoss',
@@ -37,6 +38,7 @@ model = dict(
                     custom_cls_channels=True),
             ),
             dict(
+                type='Shared2FCBBoxHead',
                 reg_class_agnostic=True,
                 loss_cls=dict(
                     type='QualityFocalLoss',
@@ -46,6 +48,7 @@ model = dict(
                     custom_cls_channels=True),
             ),
             dict(
+                type='Shared2FCBBoxHead',
                 reg_class_agnostic=True,
                 loss_cls=dict(
                     type='QualityFocalLoss',

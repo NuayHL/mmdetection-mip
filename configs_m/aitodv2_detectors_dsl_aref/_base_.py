@@ -60,9 +60,9 @@ model = dict(
             style='pytorch')),
     roi_head=dict(
         bbox_head=[
-            dict(num_classes=8),
-            dict(num_classes=8),
-            dict(num_classes=8),
+            dict(type='Shared2FCBBoxHead', num_classes=8),
+            dict(type='Shared2FCBBoxHead', num_classes=8),
+            dict(type='Shared2FCBBoxHead', num_classes=8),
         ],
     ),
     train_cfg=dict(

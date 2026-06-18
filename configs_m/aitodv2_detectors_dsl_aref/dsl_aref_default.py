@@ -23,6 +23,7 @@ model = dict(
         use_iou_soft_target=True,
         bbox_head=[
             dict(
+                type='Shared2FCBBoxHead',
                 reg_class_agnostic=True,
                 loss_cls=dict(
                     type='QualityFocalLoss',
@@ -32,6 +33,7 @@ model = dict(
                     custom_cls_channels=True),
             ),
             dict(
+                type='Shared2FCBBoxHead',
                 reg_class_agnostic=True,
                 loss_cls=dict(
                     type='QualityFocalLoss',
@@ -41,6 +43,7 @@ model = dict(
                     custom_cls_channels=True),
             ),
             dict(
+                type='Shared2FCBBoxHead',
                 reg_class_agnostic=True,
                 loss_cls=dict(
                     type='QualityFocalLoss',
