@@ -247,6 +247,9 @@ class DynAssignCascadeRoIHead(CascadeRoIHead):
             labels, label_weights, bbox_targets, bbox_weights,
             iou_target)
         bbox_results.update(loss_bbox=losses)
+        # CascadeRoIHead.loss() expects bbox_targets for refine_bboxes()
+        bbox_results['bbox_targets'] = (labels, label_weights,
+                                        bbox_targets, bbox_weights)
         return bbox_results
 
     def loss(self, x: Tuple[Tensor], rpn_results_list: InstanceList,
