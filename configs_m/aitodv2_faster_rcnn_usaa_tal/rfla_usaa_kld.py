@@ -14,7 +14,7 @@ set ``align_mode='kl'`` / ``score_mode='kl'`` on the assigner (see
 
 _base_ = ['./_base_usaa.py']
 
-# RFLA RPN override only — USAA RCNN inherited unchanged from _base_usaa.py.
+# RFLA RPN override + currency-matched RCNN dmetric.
 model = dict(
     rpn_head=dict(
         anchor_generator=dict(
@@ -34,6 +34,15 @@ model = dict(
                 assign_metric='kl',
                 topk=[3, 1],
                 ratio=0.9),
+        ),
+        # Currency match: RFLA surfaces tiny-object proposals by KLD, whose
+        # CIoU is near-zero (→ ~0 soft labels → collapse). Use KLD as the RCNN
+        # dmetric so the soft target stays meaningful for tiny objects.
+        rcnn=dict(
+            assigner=dict(
+                overlap_mode='kl',
+                align_mode='kl',
+                score_mode='kl'),
         ),
     ),
 )

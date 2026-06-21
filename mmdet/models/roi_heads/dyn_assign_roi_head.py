@@ -70,6 +70,7 @@ class DynAssignRoIHead(StandardRoIHead):
                  cls_score_activation: str = 'softmax',
                  prior_format: str = 'xyxy',
                  use_iou_soft_target: bool = False,
+                 cls_avg_factor: str = 'num_samples',
                  **kwargs) -> None:
         super().__init__(**kwargs)
         assert cls_score_activation in ('softmax', 'sigmoid', 'identity'), (
@@ -77,9 +78,20 @@ class DynAssignRoIHead(StandardRoIHead):
             f"'identity', got {cls_score_activation!r}")
         assert prior_format in ('xyxy', 'point'), (
             f"prior_format must be 'xyxy' or 'point', got {prior_format!r}")
+        assert cls_avg_factor in ('num_samples', 'num_pos', 'pos_soft_sum'), (
+            f"cls_avg_factor must be 'num_samples', 'num_pos' or "
+            f"'pos_soft_sum', got {cls_avg_factor!r}")
         self.cls_score_activation = cls_score_activation
         self.prior_format = prior_format
         self.use_iou_soft_target = use_iou_soft_target
+        # Normalizer for the soft-label classification loss:
+        #   'num_samples'  — count of all sampled proposals (mmdet RCNN default;
+        #                    with PseudoSampler this is EVERY proposal, which
+        #                    dilutes the positive signal ~100-1000x).
+        #   'num_pos'      — number of positives (GFL convention).
+        #   'pos_soft_sum' — Σ(soft targets) (YOLO/TOOD/VFL convention; the
+        #                    faithful match for a TAL soft-label head).
+        self.cls_avg_factor = cls_avg_factor
 
     def _activate_cls_score(self, cls_score: Tensor) -> Tensor:
         """Map raw cls logits to per-class scores expected by the assigner.
@@ -290,8 +302,17 @@ class DynAssignRoIHead(StandardRoIHead):
         losses: dict = dict()
 
         if cls_score is not None and cls_score.numel() > 0:
-            avg_factor = max(
-                torch.sum(label_weights > 0).float().item(), 1.)
+            if self.cls_avg_factor == 'pos_soft_sum':
+                # YOLO/TOOD/VFL: normalize by the total soft-label mass so the
+                # positive gradient is not diluted by the background flood.
+                avg_factor = max(float(iou_target.sum().item()), 1.)
+            elif self.cls_avg_factor == 'num_pos':
+                bg = bh.num_classes
+                avg_factor = max(
+                    float(((labels >= 0) & (labels < bg)).sum().item()), 1.)
+            else:  # 'num_samples' — mmdet RCNN default
+                avg_factor = max(
+                    torch.sum(label_weights > 0).float().item(), 1.)
             loss_cls_ = bh.loss_cls(
                 cls_score, (labels, iou_target),
                 label_weights,

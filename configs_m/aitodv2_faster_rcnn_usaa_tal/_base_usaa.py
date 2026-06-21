@@ -29,6 +29,13 @@ model = dict(
         cls_score_activation='sigmoid',   # s must be a probability for s^α
         prior_format='point',             # (cx, cy, min(w,h), min(w,h))
         use_iou_soft_target=True,         # deliver TAL soft label to QFL
+        # Normalize cls loss by the number of POSITIVES (GFL convention), NOT
+        # by the proposal count. With PseudoSampler the count is ~every
+        # proposal (~1-2k), which diluted the positive gradient ~30-1000x and
+        # was the main reason the earlier USAA port collapsed at inference.
+        # ('pos_soft_sum' is the exact YOLO/TOOD normalization but needs
+        #  warmup+grad-clip to be stable; 'num_pos' is robust out of the box.)
+        cls_avg_factor='pos_soft_sum',
         bbox_head=dict(
             num_classes=8,
             reg_class_agnostic=True,

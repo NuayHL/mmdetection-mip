@@ -24,5 +24,13 @@ model = dict(
                 assign_metric='nwd',
                 topk=2),
         ),
+        # Currency match: NWD RPN → NWD RCNN dmetric so tiny-object soft
+        # labels stay meaningful (CIoU would collapse them to ~0).
+        rcnn=dict(
+            assigner=dict(
+                overlap_mode='nwd',
+                align_mode='nwd',
+                score_mode='nwd'),
+        ),
     ),
 )

@@ -14,5 +14,13 @@ model = dict(
         rpn=dict(
             assigner=dict(assign_metric='wd'),
         ),
+        # Currency match: WD RPN → WD RCNN dmetric (override the 'kl'
+        # inherited from rfla_usaa_kld.py).
+        rcnn=dict(
+            assigner=dict(
+                overlap_mode='wd',
+                align_mode='wd',
+                score_mode='wd'),
+        ),
     ),
 )
