@@ -29,13 +29,13 @@ model = dict(
         cls_score_activation='sigmoid',   # s must be a probability for s^α
         prior_format='point',             # (cx, cy, min(w,h), min(w,h))
         use_iou_soft_target=True,         # deliver TAL soft label to QFL
-        # Normalize cls loss by the number of POSITIVES (GFL convention), NOT
-        # by the proposal count. With PseudoSampler the count is ~every
-        # proposal (~1-2k), which diluted the positive gradient ~30-1000x and
-        # was the main reason the earlier USAA port collapsed at inference.
-        # ('pos_soft_sum' is the exact YOLO/TOOD normalization but needs
-        #  warmup+grad-clip to be stable; 'num_pos' is robust out of the box.)
-        cls_avg_factor='pos_soft_sum',
+        # With RandomSampler (bounded 512 samples, 1:3) 'num_samples' is both
+        # stable and undiluted — avg_factor≈512 with a healthy positive
+        # fraction, NOT the ~2000 of PseudoSampler. Do NOT use 'pos_soft_sum'
+        # here: its denominator Σ(soft targets) collapses to ~0.01 on sparse
+        # batches while ~2000 bg proposals stay in the numerator → loss spikes
+        # to 1000+ → logits run away → NaN (this is exactly the failure you saw).
+        cls_avg_factor='num_samples',
         bbox_head=dict(
             num_classes=8,
             reg_class_agnostic=True,
@@ -86,12 +86,21 @@ model = dict(
                     r_ref=64.0,
                 ),
             ),
-            # PseudoSampler keeps every proposal (YOLO/TAL style): the soft
-            # label + QFL provide the implicit fg/bg weighting. If fg/bg
-            # imbalance hurts, swap to:
-            #   sampler=dict(type='RandomSampler', num=512, pos_fraction=0.25,
-            #                neg_pos_ub=-1, add_gt_as_proposals=True),
-            sampler=dict(type='PseudoSampler'),
+            # RandomSampler, NOT PseudoSampler. The YOLO "all anchors" recipe
+            # does not transfer to two-stage RCNN: PseudoSampler floods the QFL
+            # with ~2000 background proposals (huge numerator) while the soft
+            # denominator (Σ soft targets / #pos) collapses on sparse-GT
+            # batches → loss spikes → logits run away → NaN ('pos_soft_sum'),
+            # or avg_factor≈2000 dilutes the positive signal → AP collapse
+            # ('num_samples'). RandomSampler caps negatives (1:3) and fixes the
+            # denominator, curing BOTH failure modes. add_gt_as_proposals
+            # guarantees every GT a positive (key for tiny objects).
+            sampler=dict(
+                type='RandomSampler',
+                num=512,
+                pos_fraction=0.25,
+                neg_pos_ub=-1,
+                add_gt_as_proposals=True),
             pos_weight=-1,
             debug=False,
         ),
