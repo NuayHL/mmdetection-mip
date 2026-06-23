@@ -35,6 +35,7 @@ from .metric_calculator import BboxDistanceMetric
 from .hierarchical_assigner import HieAssigner
 from .ranking_assigner import RankingAssigner
 from .max_soft_iou_assigner import MaxSoftIoUAssigner
+from .max_iou_pred_soft_label_assigner import MaxIoUPredSoftLabelAssigner
 from .task_aligned_assigner_usaa import TaskAlignedAssignerUSAA
 
 __all__ = [
@@ -53,5 +54,6 @@ __all__ = [
     'DyabBase', 'FixedAB', 'DyabBudgetShift', 'DyabLinearFusion',
     'DyabCalibrationAware', 'DyabDSL',
     'TaskAlignedAssignerDScaleDYAB', 'DScaleFunctions', 'RankingAssigner',
-    'MaxSoftIoUAssigner', 'TaskAlignedAssignerUSAA'
+    'MaxSoftIoUAssigner', 'MaxIoUPredSoftLabelAssigner',
+    'TaskAlignedAssignerUSAA'
 ]
