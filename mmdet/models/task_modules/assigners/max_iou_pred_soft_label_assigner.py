@@ -122,8 +122,14 @@ class MaxIoUPredSoftLabelAssigner(MaxIoUAssigner):
             ``'dotd'`` …). Defaults to ``'iou'``.
         score_iou_calculator (dict): Calculator producing the ``score_mode``
             metric. Defaults to ``dict(type='BboxDistanceMetric')``.
-        floor_to_pos_thr (bool): Apply the ``max(·, pos_iou_thr)`` floor.
+        floor_to_pos_thr (bool): Apply a floor on the soft label.
             Defaults to True.
+        floor_value (float, optional): The floor applied when
+            ``floor_to_pos_thr`` is True. ``None`` → ``pos_iou_thr`` (original
+            behaviour). A smaller value (e.g. 0.1) is a gentle floor that keeps
+            early-training stability without clamping poorly-localised
+            positives up to pos_iou_thr (the main AP50↑ / mAP↓ lever).
+            Defaults to None.
         soft_label (bool): If False, leaves ``max_overlaps`` as the plain
             proposal IoU (pure MaxIoU ablation). Defaults to True.
         **kwargs: Forwarded to :class:`MaxIoUAssigner` (``min_pos_iou``,
@@ -139,6 +145,7 @@ class MaxIoUPredSoftLabelAssigner(MaxIoUAssigner):
                  score_mode: str = 'iou',
                  score_iou_calculator: dict = dict(type='BboxDistanceMetric'),
                  floor_to_pos_thr: bool = True,
+                 floor_value: Optional[float] = None,
                  soft_label: bool = True,
                  **kwargs):
         super().__init__(
@@ -151,6 +158,13 @@ class MaxIoUPredSoftLabelAssigner(MaxIoUAssigner):
         self.score_mode = score_mode
         self.score_iou_calculator = TASK_UTILS.build(score_iou_calculator)
         self.floor_to_pos_thr = floor_to_pos_thr
+        # Floor applied to the soft label when ``floor_to_pos_thr`` is True.
+        # ``None`` → ``pos_iou_thr`` (original behaviour). Set a smaller value
+        # (e.g. 0.1) for a *gentle* floor that keeps early-training stability
+        # without inflating poorly-localised positives up to pos_iou_thr —
+        # the main AP50↑ / mAP↓ lever. ``add_gt_as_proposals=True`` already
+        # guarantees a target=1.0 positive per GT, so even floor=0 is safe.
+        self.floor_value = floor_value
         self.soft_label = soft_label
 
     # ── helpers ───────────────────────────────────────────────────────────
@@ -218,7 +232,9 @@ class MaxIoUPredSoftLabelAssigner(MaxIoUAssigner):
 
         soft = self._calibrate(iou_pos, rho_pos).clamp(min=0.0, max=1.0)
         if self.floor_to_pos_thr:
-            soft = torch.clamp(soft, min=float(self.pos_iou_thr))
+            floor = (self.pos_iou_thr if self.floor_value is None
+                     else self.floor_value)
+            soft = torch.clamp(soft, min=float(floor))
 
         max_overlaps[pos_mask] = soft
         assign_result.max_overlaps = max_overlaps
