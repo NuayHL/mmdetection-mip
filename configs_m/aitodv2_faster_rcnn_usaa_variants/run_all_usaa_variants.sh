@@ -50,9 +50,14 @@ run_one() {
 #
 # USAA two-stage variants (each = baseline + exactly one soft mechanism)
 #
-run_one "softrpn"         "configs_m/aitodv2_faster_rcnn_usaa_variants/softrpn.py"
-run_one "softlabel_roi"   "configs_m/aitodv2_faster_rcnn_usaa_variants/softlabel_roi.py"
-run_one "iouaware"        "configs_m/aitodv2_faster_rcnn_usaa_variants/iouaware.py"
+# run_one "rfla_predsoftlabel_th05_nofloor"         "configs_m/aitodv2_faster_rcnn_usaa_variants/rfla_predsoftlabel_th05_nofloor.py"
+run_one "rfla_predsoftlabel_th05_nofloor_wd"         "configs_m/aitodv2_faster_rcnn_usaa_variants/rfla_predsoftlabel_th05_nofloor_wd.py"
+run_one "rfla_predsoftlabel_honest"         "configs_m/aitodv2_faster_rcnn_usaa_variants/rfla_predsoftlabel_honest.py"
+run_one "rfla_predsoftlabel_nwd"         "configs_m/aitodv2_faster_rcnn_usaa_variants/rfla_predsoftlabel_nwd.py"
+run_one "predsoftlabel_nofloor"         "configs_m/aitodv2_faster_rcnn_usaa_variants/predsoftlabel_nofloor.py"
+
+# run_one "rfla_predsoftlabel_pos05"   "configs_m/aitodv2_faster_rcnn_usaa_variants/rfla_predsoftlabel_pos05.py"
+
 
 #
 # Report

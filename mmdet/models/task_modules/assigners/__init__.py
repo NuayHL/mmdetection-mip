@@ -10,6 +10,8 @@ from .dynamic_soft_label_assigner_dscale_dyab import (
     DYAB_REGISTRY, DyabBase, FixedAB, DyabBudgetShift,
     DyabLinearFusion, DyabCalibrationAware, DyabDSL,
     DynamicSoftLabelAssignerDScaleDYAB)
+from .dynamic_soft_label_assigner_dscale_dyab_calib import \
+    DynamicSoftLabelAssignerDScaleDYABCalib
 from .grid_assigner import GridAssigner
 from .hungarian_assigner import HungarianAssigner
 from .iou2d_calculator import BboxOverlaps2D, BboxOverlaps2D_GLIP
@@ -55,5 +57,5 @@ __all__ = [
     'DyabCalibrationAware', 'DyabDSL',
     'TaskAlignedAssignerDScaleDYAB', 'DScaleFunctions', 'RankingAssigner',
     'MaxSoftIoUAssigner', 'MaxIoUPredSoftLabelAssigner',
-    'TaskAlignedAssignerUSAA'
+    'TaskAlignedAssignerUSAA', 'DynamicSoftLabelAssignerDScaleDYABCalib'
 ]

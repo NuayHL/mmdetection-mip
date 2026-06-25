@@ -31,8 +31,7 @@ model = dict(
             assigner=dict(
                 score_mode='nwd',
                 calibrate_mode='none',
-                floor_to_pos_thr=True,
-                floor_value=0.1),
+                floor_to_pos_thr=False,),
         ),
     ),
 )
