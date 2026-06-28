@@ -19,16 +19,11 @@ supervision signal.
 
 _base_ = ['./dsl_dyab_rcnn_default.py']
 
-# Gradient clipping — the DSL-DScale-DYAB base configs ship WITHOUT it. The
-# calibrated soft label raises small-object cls confidence → the prediction-
-# aware DSL matching picks more tiny-box positives → more regression stress on
-# tiny/degenerate boxes, which the 3-stage cascade refinement amplifies into a
-# single-step bbox blow-up at ~epoch 14 (s1/s2.loss_bbox → inf → loss nan →
-# dead weights). Single-stage Faster R-CNN has no cross-stage amplification, so
-# it stayed stable without clipping. max_norm=35 is the mmdet standard; if it
-# still diverges, drop to 10 and/or lower lr (0.005→0.0035). For a clean A/B,
-# add the same clip to the non-calibrated default before comparing.
-optim_wrapper = dict(clip_grad=dict(max_norm=35, norm_type=2))
+# NOTE on stability: the cascade/detectors NaN at ~epoch 14 was NOT a gradient
+# explosion (grad clipping did not help — once a degenerate proposal makes an
+# inf regression target, the gradient is nan and clip's norm becomes nan too).
+# Root cause is fixed at source in bbox2delta (proposal w/h floored to >=1px),
+# so no grad clipping is needed here.
 
 model = dict(
     train_cfg=dict(

@@ -67,6 +67,7 @@ class DynAssignCascadeRoIHead(CascadeRoIHead):
                  cls_score_activation: str = 'softmax',
                  prior_format: str = 'xyxy',
                  use_iou_soft_target: bool = False,
+                 min_proposal_size: float = 1.0,
                  **kwargs) -> None:
         super().__init__(**kwargs)
         assert cls_score_activation in ('softmax', 'sigmoid', 'identity'), (
@@ -77,6 +78,17 @@ class DynAssignCascadeRoIHead(CascadeRoIHead):
         self.cls_score_activation = cls_score_activation
         self.prior_format = prior_format
         self.use_iou_soft_target = use_iou_soft_target
+        # Floor every proposal's width/height (px) before it is used for
+        # assignment / target encoding. ``refine_bboxes`` border-clamps
+        # out-of-image predictions, which can collapse a box to ZERO width or
+        # height; encoding such a proposal gives ``dw = log(gw/0) = inf``
+        # (``bbox2delta`` has no guard) → inf regression target → nan grads →
+        # dead net. This is the actual NaN root cause on cascade/detectors
+        # (single-stage Faster R-CNN has no refine step, so it never hits it).
+        # Kept LOCAL to this head (rather than patching the global bbox coder).
+        # A sub-pixel proposal is meaningless, so this never touches a real
+        # detection. Set to 0 to disable.
+        self.min_proposal_size = min_proposal_size
 
     # ------------------------------------------------------------------
     #  Helpers  (mirror DynAssignRoIHead)
@@ -133,6 +145,29 @@ class DynAssignCascadeRoIHead(CascadeRoIHead):
         from mmdet.models.task_modules.assigners.dynamic_soft_label_assigner \
             import DynamicSoftLabelAssigner
         return isinstance(assigner, DynamicSoftLabelAssigner)
+
+    def _clamp_proposals_min_size(self, results_list: InstanceList) -> None:
+        """Floor proposal w/h in place so target encoding can't produce inf.
+
+        Guards against degenerate (zero/sub-pixel) proposals from
+        ``refine_bboxes`` border-clamping; see ``min_proposal_size``. Operates
+        on the underlying tensor (works for raw Tensor and BaseBoxes alike), so
+        the box type is preserved. Clamps both ``priors`` and ``bboxes`` if
+        present, since either may carry the proposal boxes at a given stage.
+        """
+        ms = self.min_proposal_size
+        if ms <= 0:
+            return
+        for res in results_list:
+            for key in ('priors', 'bboxes'):
+                boxes = res.get(key, None)
+                if boxes is None:
+                    continue
+                t = get_box_tensor(boxes)
+                if t.numel() == 0:
+                    continue
+                t[:, 2] = torch.maximum(t[:, 2], t[:, 0] + ms)
+                t[:, 3] = torch.maximum(t[:, 3], t[:, 1] + ms)
 
     # ------------------------------------------------------------------
     #  IoU-target loss  (mirror DynAssignRoIHead._loss_with_iou_target)
@@ -273,6 +308,13 @@ class DynAssignCascadeRoIHead(CascadeRoIHead):
         for stage in range(self.num_stages):
             self.current_stage = stage
             stage_loss_weight = self.stage_loss_weights[stage]
+
+            # Floor degenerate (zero/sub-pixel) proposals before they are used
+            # for the pre-assignment forward, assignment and target encoding —
+            # otherwise a border-clamped refined box gives an inf regression
+            # target (see _clamp_proposals_min_size). Applied to every stage's
+            # proposals (RPN at stage 0, refined boxes at later stages).
+            self._clamp_proposals_min_size(results_list)
 
             bbox_assigner = self.bbox_assigner[stage]
             bbox_sampler = self.bbox_sampler[stage]
