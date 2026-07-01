@@ -18,6 +18,7 @@ from .ddq_detr_head import DDQDETRHead
 from .deformable_detr_head import DeformableDETRHead
 from .detr_head import DETRHead
 from .dino_head import DINOHead
+from .dino_head_usaa import DINOHeadUSAA
 from .embedding_rpn_head import EmbeddingRPNHead
 from .fcos_head import FCOSHead
 from .fcos_tal_head import FCOSTALHead
@@ -81,6 +82,7 @@ __all__ = [
     'CenterNetUpdateHead', 'RTMDetHead', 'RTMDetSepBNHead', 'CondInstBboxHead',
     'CondInstMaskHead', 'RTMDetInsHead', 'RTMDetInsSepBNHead',
     'BoxInstBboxHead', 'BoxInstMaskHead', 'ConditionalDETRHead', 'DINOHead',
+    'DINOHeadUSAA',
     'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead',
 
     'AlterConvModule',

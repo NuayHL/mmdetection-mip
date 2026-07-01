@@ -39,6 +39,7 @@ from .ranking_assigner import RankingAssigner
 from .max_soft_iou_assigner import MaxSoftIoUAssigner
 from .max_iou_pred_soft_label_assigner import MaxIoUPredSoftLabelAssigner
 from .task_aligned_assigner_usaa import TaskAlignedAssignerUSAA
+from .hungarian_assigner_usaa import HungarianAssignerUSAA
 
 __all__ = [
     'BaseAssigner', 'BinaryFocalLossCost', 'MaxIoUAssigner',
@@ -57,5 +58,6 @@ __all__ = [
     'DyabCalibrationAware', 'DyabDSL',
     'TaskAlignedAssignerDScaleDYAB', 'DScaleFunctions', 'RankingAssigner',
     'MaxSoftIoUAssigner', 'MaxIoUPredSoftLabelAssigner',
-    'TaskAlignedAssignerUSAA', 'DynamicSoftLabelAssignerDScaleDYABCalib'
+    'TaskAlignedAssignerUSAA', 'DynamicSoftLabelAssignerDScaleDYABCalib',
+    'HungarianAssignerUSAA'
 ]
